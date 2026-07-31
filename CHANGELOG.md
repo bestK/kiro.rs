@@ -4,7 +4,26 @@ All notable changes to this project are documented in this file. The format
 loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project adheres to [Semantic Versioning](https://semver.org/).
 
-## [0.7.4] - 2026-07-28
+## [0.8.0] - 2026-07-29
+
+主题：**客户端 Key 的用量可观测与配额治理**。新增「按入口 Key 的用量分布」视图，并支持为单个 Key 设置**最高使用积分（credit）上限**，达到上限后自动拒绝其请求。新增数据字段均 `serde(default)`，旧 `client_api_keys.json` 无需改动。
+
+### ✨ 新增 — 按入口 Key 用量分布
+
+- 新增 `GET /api/admin/stats/by-key`：按入口 Key 横向汇总所选时间窗内的调用次数、输入/输出/缓存 Token、异常数与 credit 计费量，附加 Key 名称。
+- 聚合层新增 `UsageAggregator::query_by_key`，复用既有的每桶 `by_key` 预聚合；启用**分组筛选**时按凭据白名单走 `by_key_credential` 求和，与「按上游凭据分布」的过滤口径一致。
+- 概览页新增「按入口 Key 分布」面板：柱状图（Top 12）+ 明细表（异常数飘红、附 credit 列）。该面板为横向对比，**不随上方「统计筛选」的单 Key 选择变化**，前端已加说明文案避免困惑。
+
+### ✨ 新增 — 单个 Key 最高使用积分上限
+
+- `ClientKey` 新增 `maxCredits` 字段（`None`/省略 = 不限制）。上限基于**累计 `totalCredits`** 判定，「重置统计」清零后即可重新计费。
+- 鉴权层新增 `verify_and_touch_ex`，返回 `Ok` / `OverLimit` / `NotFound` 三态；命中但已达上限的请求返回 **HTTP 429 `rate_limit_error`**（提示已用/上限），且**不累加调用次数**。
+- 新增 `POST /api/admin/client-keys/{id}/max-credits`（body `{ "maxCredits": <number|null> }`，`null` 取消限制）；创建 Key 时亦可通过 `maxCredits` 直接指定。入参强制为**非负有限数**；`0` 表示零预算（立即拒绝）。
+- Key 管理页新增「积分 / 上限」列：接近上限（≥80%）转琥珀、达到/超过转红；创建与编辑对话框均可设置或清除上限。
+
+### ⚠️ 行为说明 — 上限为「软配额」
+
+积分为**累计**判定，且 credit 由上游 `meteringEvent.usage` 在**请求结束时**才入账。因此上限是软约束：在某个 Key 逼近上限时，**并发进行中的多个请求会在各自入账前都通过上限检查**，实际用量可能超出上限，超出幅度取决于并发数与单次请求的 credit 量。此设计避免请求执行中途被打断；若需要更硬的约束，应叠加外部限流。被拒的 429 请求为提前返回，不写入用量日志与链路追踪。
 
 主题：**修复 IdC / Enterprise 重新登录后 Token 无法刷新，以及持续 403 场景下“全账号自愈”陷入 `全禁 → 自愈 → 403 → 再禁` 死循环的问题**。本版合并 [PR #52](https://github.com/ZyphrZero/kiro.rs/pull/52) 与 [issue #51](https://github.com/ZyphrZero/kiro.rs/issues/51) 的修复：重新登录会整体替换与 OIDC 客户端绑定的凭据；账号池则精准识别 403 封禁，并通过配置驱动的**节流 + 连续上限 + 可观测**治理自愈行为。新增配置字段均 `serde(default)`，旧 `config.json` 无需改动。
 

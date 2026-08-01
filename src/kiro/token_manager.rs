@@ -6509,6 +6509,7 @@ mod tests {
         .unwrap();
         let metadata = crate::kiro::model::credentials::CredentialMetadata {
             kind: crate::kiro::model::credentials::CredentialType::Boom,
+            sale_status: crate::kiro::model::credentials::CredentialSaleStatus::ForSale,
             extra: std::collections::BTreeMap::from([(
                 "supplier".to_string(),
                 serde_json::Value::String("vendor-a".to_string()),
@@ -6523,6 +6524,10 @@ mod tests {
         assert_eq!(
             snapshot.entries[0].metadata.kind,
             crate::kiro::model::credentials::CredentialType::Boom
+        );
+        assert_eq!(
+            snapshot.entries[0].metadata.sale_status,
+            crate::kiro::model::credentials::CredentialSaleStatus::ForSale
         );
         assert_eq!(
             snapshot.entries[0].metadata.extra.get("supplier"),

@@ -349,6 +349,7 @@ export function SettingReadout({
 
 /** 设置分区容器 */
 export function SettingGroup({
+  id,
   title,
   description,
   badge,
@@ -357,6 +358,7 @@ export function SettingGroup({
   className,
   headerRight,
 }: {
+  id?: string
   title: string
   description?: React.ReactNode
   badge?: React.ReactNode
@@ -367,8 +369,9 @@ export function SettingGroup({
 }) {
   return (
     <section
+      id={id}
       className={cn(
-        'rounded-xl border border-border/80 bg-card shadow-xs overflow-hidden transition-colors',
+        'rounded-xl border border-border/80 bg-card shadow-xs overflow-hidden transition-colors scroll-mt-6',
         className,
       )}
     >

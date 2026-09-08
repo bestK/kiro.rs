@@ -49,6 +49,15 @@ import { cn } from '@/lib/utils'
 import type { VerifyBillingResponse } from '@/types/api'
 import { ProfitCalculator } from '@/components/settings/profit-calculator'
 import { BillingRatioSimulator } from '@/components/settings/billing-ratio-simulator'
+import { FloatingSectionNav, type NavSectionItem } from '@/components/console/floating-section-nav'
+
+const BILLING_NAV_ITEMS: NavSectionItem[] = [
+  { id: 'section-billing-global', title: '全局折算设置' },
+  { id: 'section-billing-hierarchy', title: '分级覆盖规则' },
+  { id: 'section-billing-estimate', title: '换算估算参考与在线验证' },
+  { id: 'section-billing-profit', title: '利润测算与用量盈亏分析' },
+  { id: 'section-billing-ratio', title: '下游计费口径与官方倍率模拟' },
+]
 
 /**
  * 专属基准价格设置行：支持按「每千分单价 (USD / 千分)」与「单积分价格 (USD / 积分)」两种视角无缝切换与修改。
@@ -962,6 +971,9 @@ export function BillingSection() {
 
   return (
     <div className="space-y-6">
+      {/* 页面右侧固定模块目录导航 (默认横线，悬浮显示模块名称) */}
+      <FloatingSectionNav items={BILLING_NAV_ITEMS} />
+
       {/* 顶部概念说明横幅 */}
       <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 sm:p-5">
         <div className="flex items-start gap-3">
@@ -986,6 +998,7 @@ export function BillingSection() {
 
       {/* 全局折算配置卡片 */}
       <SettingGroup
+        id="section-billing-global"
         title="全局折算设置"
         description="控制整个实例默认的计费折算规则。当分组或客户端 Key 未单独指定时，自动沿用此处的全局基准。"
         icon={<Coins className="h-4 w-4" />}
@@ -1063,6 +1076,7 @@ export function BillingSection() {
 
       {/* 分级生效与管理覆盖 */}
       <SettingGroup
+        id="section-billing-hierarchy"
         title="分级覆盖规则"
         description="折算设置支持多级覆盖，越靠近调用端优先级越高，满足不同分组或客户的差异化计费需求。"
         icon={<FolderTree className="h-4 w-4" />}
@@ -1123,19 +1137,9 @@ export function BillingSection() {
         </div>
       </SettingGroup>
 
-      {/* 下游官方价格倍率模拟与对外口径 */}
-      <SettingGroup
-        title="下游计费口径与官方倍率模拟"
-        description="面向下游开发者与终端客户最习惯的「官方标准价格 × XX 倍率」口径。实时换算各模型实收单价并一键生成对外公告文案。"
-        icon={<Tag className="h-4 w-4" />}
-      >
-        <div className="py-2">
-          <BillingRatioSimulator currentCreditPrice={creditPrice} />
-        </div>
-      </SettingGroup>
-
       {/* 实时折算效果估算与在线验证 */}
       <SettingGroup
+        id="section-billing-estimate"
         title="换算估算参考与在线验证"
         description="按当前设定的单价预览不同用量折算配额，或直接向下游地址发起请求进行在线价格与 Token 对齐验证。"
         icon={<Calculator className="h-4 w-4" />}
@@ -1430,12 +1434,25 @@ export function BillingSection() {
 
       {/* 利润测算与用量盈亏分析 */}
       <SettingGroup
+        id="section-billing-profit"
         title="利润测算与用量盈亏分析"
         description="填入下游 New API 管理地址与管理员令牌，选择分组与时间范围，拉取真实用量并基于当前配置测算毛利润与利润率。"
         icon={<TrendingUp className="h-4 w-4" />}
       >
         <div className="py-2">
           <ProfitCalculator currentCreditPrice={creditPrice} />
+        </div>
+      </SettingGroup>
+
+      {/* 下游官方价格倍率模拟与对外口径 (移至最底部) */}
+      <SettingGroup
+        id="section-billing-ratio"
+        title="下游计费口径与官方倍率模拟"
+        description="面向下游开发者与终端客户最习惯的「官方标准价格 × XX 倍率」口径。实时换算各模型实收单价并一键生成对外公告文案。"
+        icon={<Tag className="h-4 w-4" />}
+      >
+        <div className="py-2">
+          <BillingRatioSimulator currentCreditPrice={creditPrice} />
         </div>
       </SettingGroup>
     </div>

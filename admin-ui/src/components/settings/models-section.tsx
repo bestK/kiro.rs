@@ -19,6 +19,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { Badge } from '@/components/ui/badge'
+import { FloatingSectionNav, type NavSectionItem } from '@/components/console/floating-section-nav'
 import {
   SettingGroup,
   SettingSwitch,
@@ -101,6 +102,12 @@ function UpstreamModelRow({ model }: { model: AvailableModelItem }) {
     </div>
   )
 }
+
+const MODELS_NAV_ITEMS: NavSectionItem[] = [
+  { id: 'models-cache', title: '缓存计量模拟' },
+  { id: 'models-affinity', title: '会话粘性路由' },
+  { id: 'models-custom', title: '模型列表与映射' },
+]
 
 // ──── 主组件 ──────────────────────────────────────────────────────────────
 
@@ -222,6 +229,8 @@ export function ModelsSection() {
 
   return (
     <div className="space-y-6">
+      <FloatingSectionNav items={MODELS_NAV_ITEMS} />
+      <div id="models-cache">
       <SettingGroup
         title="Prompt Cache 提示词缓存"
         description="控制向客户端返回的用量中是否包含 Anthropic 格式的缓存计量"
@@ -246,7 +255,9 @@ export function ModelsSection() {
           disabled={cacheLoading}
         />
       </SettingGroup>
+      </div>
 
+      <div id="models-affinity">
       <SettingGroup
         title="会话粘性路由"
         description="开启后同一会话的后续轮次优先沿用上一轮成功的账号；该账号不可用时才回落到负载均衡。上游 prompt cache 按 profile 隔离：账号同属一个 profile 时换号不丢缓存（凭据页顶部有标记），跨 profile 部署时粘性才真正保住缓存。"
@@ -294,7 +305,9 @@ export function ModelsSection() {
           />
         )}
       </SettingGroup>
+      </div>
 
+      <div id="models-custom">
       {/* 积分计费跳转提示横幅 */}
       <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="flex items-start sm:items-center gap-3">
@@ -647,6 +660,7 @@ export function ModelsSection() {
           </>
         )}
       </SettingGroup>
+      </div>
     </div>
   )
 }

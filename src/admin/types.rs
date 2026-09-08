@@ -92,6 +92,18 @@ pub struct CredentialStatusItem {
     /// 余额缓存的更新时间（Unix 秒，仅在 balance 有值时返回）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub balance_updated_at: Option<f64>,
+    /// 临时冷却剩余秒数（账号级 429 风控）；冷却中且 `> 0` 才返回
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub throttled_remaining_secs: Option<u64>,
+    /// 当前在途并发请求数
+    #[serde(default)]
+    pub in_flight: u32,
+    /// 最近 1 分钟滑动窗口内的请求次数 (RPM)
+    #[serde(default)]
+    pub current_rpm: u32,
+    /// 账号 RPM 限制上限（若未启用则为 None）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rpm_limit: Option<u32>,
     /// 凭据添加（创建）时间（RFC3339 格式）；旧凭据缺失时为 None
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_at: Option<String>,

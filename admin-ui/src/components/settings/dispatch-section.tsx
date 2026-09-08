@@ -24,11 +24,19 @@ import {
   useFieldSaver,
 } from '@/components/console/setting-row'
 import { reportSaveError } from '@/components/settings/report-error'
+import { FloatingSectionNav, type NavSectionItem } from '@/components/console/floating-section-nav'
 
 const SECS_PER_MIN = 60
 // 与后端 SetAccountRpmLimitConfigRequest 的校验区间保持一致
 const MIN_RPM_LIMIT = 1
 const MAX_RPM_LIMIT = 100000
+
+const DISPATCH_NAV_ITEMS: NavSectionItem[] = [
+  { id: 'dispatch-load-balancing', title: '负载均衡策略' },
+  { id: 'dispatch-throttle', title: '风控故障转移' },
+  { id: 'dispatch-rpm-limit', title: '单账号RPM限制' },
+  { id: 'dispatch-self-heal', title: '凭据自愈恢复' },
+]
 
 /**
  * 调度分区：凭据怎么选、失败怎么转、禁用怎么恢复。
@@ -40,10 +48,11 @@ const MAX_RPM_LIMIT = 100000
 export function DispatchSection() {
   return (
     <div className="space-y-6">
-      <LoadBalancingGroup />
-      <ThrottleGroup />
-      <RpmLimitGroup />
-      <SelfHealGroup />
+      <FloatingSectionNav items={DISPATCH_NAV_ITEMS} />
+      <div id="dispatch-load-balancing"><LoadBalancingGroup /></div>
+      <div id="dispatch-throttle"><ThrottleGroup /></div>
+      <div id="dispatch-rpm-limit"><RpmLimitGroup /></div>
+      <div id="dispatch-self-heal"><SelfHealGroup /></div>
     </div>
   )
 }

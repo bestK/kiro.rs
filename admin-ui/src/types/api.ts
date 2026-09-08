@@ -93,6 +93,12 @@ export interface CredentialStatusItem {
   disabledReason?: string
   /** 账号级风控冷却剩余秒数（>0 表示冷却中） */
   throttledRemainingSecs?: number
+  /** 当前在途处理中的并发请求数 */
+  inFlight?: number
+  /** 最近 1 分钟滑动窗口内的请求频次 (RPM) */
+  currentRpm?: number
+  /** 单账号 RPM 限制上限 */
+  rpmLimit?: number
   endpoint: string
   /** 账号所属分组（可属于多个分组） */
   groups?: string[]

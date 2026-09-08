@@ -34,6 +34,7 @@ import {
 } from '@/components/console/data-table'
 import { BulkBar } from '@/components/console/bulk-bar'
 import { PageHeader } from '@/components/console/page-header'
+import { FloatingSectionNav, type NavSectionItem } from '@/components/console/floating-section-nav'
 import {
   TimeRangePicker,
   rangeToStartMs,
@@ -1116,8 +1117,16 @@ export function TraceLogPage() {
     url.ip,
   ].filter(Boolean).length
 
+const TRACE_NAV_ITEMS: NavSectionItem[] = [
+  { id: 'traces-header', title: '日志概览' },
+  { id: 'traces-filter', title: '多维筛选' },
+  { id: 'traces-table', title: '链路追踪表' },
+]
+
   return (
     <div className="console-scope space-y-4">
+      <FloatingSectionNav items={TRACE_NAV_ITEMS} />
+      <div id="traces-header">
       <PageHeader
         breadcrumbs={[{ label: '控制台' }, { label: '请求日志', active: true }]}
         icon={<ScrollText className="h-4 w-4" />}
@@ -1149,9 +1158,10 @@ export function TraceLogPage() {
           </>
         }
       />
+      </div>
 
       {/* 筛选栏：时间范围在最前，因为排查的第一句话通常是"刚才那几分钟" */}
-      <div className="flex flex-wrap items-center gap-2">
+      <div id="traces-filter" className="flex flex-wrap items-center gap-2">
         <TimeRangePicker
           value={range}
           onChange={(next) =>
@@ -1260,31 +1270,33 @@ export function TraceLogPage() {
         </Button>
       </div>
 
-      <ConsoleTable
-        rows={records}
-        columns={columns}
-        rowKey={(r) => r.traceId}
-        tone={traceTone}
-        selectable
-        selected={selectedTraceIds}
-        onSelectedChange={setSelectedTraceIds}
-        renderExpandedRow={(rec) => (
-          <TraceExpandedDetail
-            rec={rec}
-            onFilterSession={filterSession}
-            onFilterIp={filterIp}
-          />
-        )}
-        expandedKeys={expandedTraceIds}
-        onExpandedKeysChange={setExpandedTraceIds}
-        columnsStorageKey="kiro.traces.columns"
-        loading={isLoading}
-        empty={
-          filterCount > 0 || url.range !== ''
-            ? '当前筛选条件下没有记录。放宽时间范围或清除筛选试试。'
-            : '暂无记录。发起几次 /v1/messages 请求后即可看到链路。'
-        }
-      />
+      <div id="traces-table">
+        <ConsoleTable
+          rows={records}
+          columns={columns}
+          rowKey={(r) => r.traceId}
+          tone={traceTone}
+          selectable
+          selected={selectedTraceIds}
+          onSelectedChange={setSelectedTraceIds}
+          renderExpandedRow={(rec) => (
+            <TraceExpandedDetail
+              rec={rec}
+              onFilterSession={filterSession}
+              onFilterIp={filterIp}
+            />
+          )}
+          expandedKeys={expandedTraceIds}
+          onExpandedKeysChange={setExpandedTraceIds}
+          columnsStorageKey="kiro.traces.columns"
+          loading={isLoading}
+          empty={
+            filterCount > 0 || url.range !== ''
+              ? '当前筛选条件下没有记录。放宽时间范围或清除筛选试试。'
+              : '暂无记录。发起几次 /v1/messages 请求后即可看到链路。'
+          }
+        />
+      </div>
 
       {/* 吸底批量操作栏 */}
       <BulkBar

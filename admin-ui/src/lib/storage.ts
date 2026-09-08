@@ -39,9 +39,9 @@ export const storage = {
   getThemeSelection,
   setThemeSelection,
 
-  // 凭据列表的展示形态（卡片 / 列表），默认卡片
+  // 凭据列表的展示形态（卡片 / 列表），默认密集表格 (list)
   getCredentialView: (): CredentialView =>
-    localStorage.getItem(CREDENTIAL_VIEW_KEY) === 'list' ? 'list' : 'card',
+    localStorage.getItem(CREDENTIAL_VIEW_KEY) === 'card' ? 'card' : 'list',
   setCredentialView: (view: CredentialView) =>
     localStorage.setItem(CREDENTIAL_VIEW_KEY, view),
 

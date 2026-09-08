@@ -1117,6 +1117,13 @@ pub struct CredentialEntrySnapshot {
     /// 临时冷却剩余秒数（账号级 429 风控）；冷却中且 `> 0` 才返回
     #[serde(skip_serializing_if = "Option::is_none")]
     pub throttled_remaining_secs: Option<u64>,
+    /// 当前在途处理中的请求数（用于负载均衡调度与并发监控）
+    pub in_flight: u32,
+    /// 最近 1 分钟滑动窗口内的请求次数 (RPM)
+    pub current_rpm: u32,
+    /// 账号 RPM 限制上限（若未启用则为 None）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rpm_limit: Option<u32>,
     /// 端点名称（未显式配置时返回 None，由 Admin 层回退到默认值）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub endpoint: Option<String>,
@@ -3221,72 +3228,90 @@ impl MultiTokenManager {
             .filter(|e| !e.disabled && !e.throttled_until.map(|t| t > now).unwrap_or(false))
             .count();
 
+        let rpm_limit = if self.account_rpm_limit_enabled.load(Ordering::Relaxed) {
+            Some(self.account_rpm_limit.load(Ordering::Relaxed))
+        } else {
+            None
+        };
+
         ManagerSnapshot {
             entries: entries
                 .iter()
-                .map(|e| CredentialEntrySnapshot {
-                    id: e.id,
-                    priority: e.credentials.priority,
-                    disabled: e.disabled,
-                    failure_count: e.failure_count,
-                    total_failure_count: e.total_failure_count,
-                    auth_method: if e.credentials.is_api_key_credential() {
-                        Some("api_key".to_string())
-                    } else {
-                        e.credentials.auth_method.as_deref().map(|m| {
-                            if m.eq_ignore_ascii_case("builder-id") || m.eq_ignore_ascii_case("iam")
-                            {
-                                "idc".to_string()
-                            } else {
-                                m.to_string()
-                            }
-                        })
-                    },
-                    provider: if e.credentials.is_api_key_credential() {
-                        None
-                    } else {
-                        e.credentials.provider.clone()
-                    },
-                    has_profile_arn: e.credentials.profile_arn.is_some(),
-                    profile_arn: e.credentials.profile_arn.clone(),
-                    expires_at: if e.credentials.is_api_key_credential() {
-                        None // API Key 凭据本地不维护过期时间（服务端策略未知）
-                    } else {
-                        e.credentials.expires_at.clone()
-                    },
-                    refresh_token_hash: if e.credentials.is_api_key_credential() {
-                        None
-                    } else {
-                        e.credentials.refresh_token.as_deref().map(sha256_hex)
-                    },
-                    api_key_hash: if e.credentials.is_api_key_credential() {
-                        e.credentials.kiro_api_key.as_deref().map(sha256_hex)
-                    } else {
-                        None
-                    },
-                    masked_api_key: if e.credentials.is_api_key_credential() {
-                        e.credentials.kiro_api_key.as_deref().map(mask_api_key)
-                    } else {
-                        None
-                    },
-                    email: e.credentials.email.clone(),
-                    subscription_title: e.credentials.subscription_title.clone(),
-                    success_count: e.success_count,
-                    last_used_at: e.last_used_at.clone(),
-                    has_proxy: e.credentials.proxy_url.is_some(),
-                    proxy_url: e.credentials.proxy_url.clone(),
-                    refresh_failure_count: e.refresh_failure_count,
-                    disabled_reason: e.disabled_reason.map(|reason| reason.as_str().to_string()),
-                    throttled_remaining_secs: e
-                        .throttled_until
-                        .and_then(|t| t.checked_duration_since(now))
-                        .map(|d| d.as_secs())
-                        .filter(|s| *s > 0),
-                    endpoint: e.credentials.endpoint.clone(),
-                    groups: e.credentials.groups.clone(),
-                    source_channel: e.credentials.source_channel.clone(),
-                    metadata: e.credentials.metadata.clone(),
-                    created_at: e.credentials.created_at.clone(),
+                .map(|e| {
+                    let in_flight = e.in_flight.load(Ordering::Relaxed);
+                    let current_rpm = e
+                        .rpm_window
+                        .iter()
+                        .filter(|&&t| now.duration_since(t).as_secs() < RPM_WINDOW_SECS)
+                        .count() as u32;
+
+                    CredentialEntrySnapshot {
+                        id: e.id,
+                        priority: e.credentials.priority,
+                        disabled: e.disabled,
+                        failure_count: e.failure_count,
+                        total_failure_count: e.total_failure_count,
+                        auth_method: if e.credentials.is_api_key_credential() {
+                            Some("api_key".to_string())
+                        } else {
+                            e.credentials.auth_method.as_deref().map(|m| {
+                                if m.eq_ignore_ascii_case("builder-id") || m.eq_ignore_ascii_case("iam")
+                                {
+                                    "idc".to_string()
+                                } else {
+                                    m.to_string()
+                                }
+                            })
+                        },
+                        provider: if e.credentials.is_api_key_credential() {
+                            None
+                        } else {
+                            e.credentials.provider.clone()
+                        },
+                        has_profile_arn: e.credentials.profile_arn.is_some(),
+                        profile_arn: e.credentials.profile_arn.clone(),
+                        expires_at: if e.credentials.is_api_key_credential() {
+                            None // API Key 凭据本地不维护过期时间（服务端策略未知）
+                        } else {
+                            e.credentials.expires_at.clone()
+                        },
+                        refresh_token_hash: if e.credentials.is_api_key_credential() {
+                            None
+                        } else {
+                            e.credentials.refresh_token.as_deref().map(sha256_hex)
+                        },
+                        api_key_hash: if e.credentials.is_api_key_credential() {
+                            e.credentials.kiro_api_key.as_deref().map(sha256_hex)
+                        } else {
+                            None
+                        },
+                        masked_api_key: if e.credentials.is_api_key_credential() {
+                            e.credentials.kiro_api_key.as_deref().map(mask_api_key)
+                        } else {
+                            None
+                        },
+                        email: e.credentials.email.clone(),
+                        subscription_title: e.credentials.subscription_title.clone(),
+                        success_count: e.success_count,
+                        last_used_at: e.last_used_at.clone(),
+                        has_proxy: e.credentials.proxy_url.is_some(),
+                        proxy_url: e.credentials.proxy_url.clone(),
+                        refresh_failure_count: e.refresh_failure_count,
+                        disabled_reason: e.disabled_reason.map(|reason| reason.as_str().to_string()),
+                        throttled_remaining_secs: e
+                            .throttled_until
+                            .and_then(|t| t.checked_duration_since(now))
+                            .map(|d| d.as_secs())
+                            .filter(|s| *s > 0),
+                        in_flight,
+                        current_rpm,
+                        rpm_limit,
+                        endpoint: e.credentials.endpoint.clone(),
+                        groups: e.credentials.groups.clone(),
+                        source_channel: e.credentials.source_channel.clone(),
+                        metadata: e.credentials.metadata.clone(),
+                        created_at: e.credentials.created_at.clone(),
+                    }
                 })
                 .collect(),
             current_id,

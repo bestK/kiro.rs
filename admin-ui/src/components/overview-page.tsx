@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/badge'
 import { Activity, Calendar, Coins, Cpu, KeyRound, Server } from 'lucide-react'
 import { useByCredential, useByKey, useByModel, useOverview, useTimeSeries } from '@/hooks/use-stats'
 import { AutoRefreshControl } from '@/components/console/auto-refresh-control'
+import { FloatingSectionNav, type NavSectionItem } from '@/components/console/floating-section-nav'
 import { PageHeader } from '@/components/console/page-header'
 import { useClientKeys } from '@/hooks/use-client-keys'
 import { useGroupOptions } from '@/hooks/use-groups'
@@ -79,6 +80,15 @@ function timeLabel(filter: StatsTimeFilter): string {
   return `${formatDateText(filter.startDate ?? '')} - ${formatDateText(filter.endDate ?? '')} · ${suffix}`
 }
 
+const OVERVIEW_NAV_ITEMS: NavSectionItem[] = [
+  { id: 'overview-summary', title: '实时状态' },
+  { id: 'overview-kpi', title: '核心指标' },
+  { id: 'overview-filter', title: '条件筛选' },
+  { id: 'overview-trend', title: '流量趋势' },
+  { id: 'overview-distribution', title: '模型分布' },
+  { id: 'overview-keys', title: 'Key 分析' },
+]
+
 export function OverviewPage() {
   const filters = useOverviewFilters()
   const overviewQuery = useOverview()
@@ -122,8 +132,14 @@ export function OverviewPage() {
   const selectedKeyLabel = selectedStatsKeyLabel(filters.keyFilter, keysData?.keys ?? [])
   const groupFilterActive = filters.groupFilter !== 'all'
 
+  const successRate = rangeStats.calls > 0
+    ? (((rangeStats.calls - rangeStats.errors) / rangeStats.calls) * 100).toFixed(1)
+    : '100'
+
   return (
     <div>
+      <FloatingSectionNav items={OVERVIEW_NAV_ITEMS} />
+
       <PageHeader
         breadcrumbs={[{ label: '控制台' }, { label: '仪表概览', active: true }]}
         icon={<Activity className="h-4 w-4" />}
@@ -142,46 +158,94 @@ export function OverviewPage() {
           />
         }
       />
-      <StatsCards
-        activeCredentials={overview?.activeCredentials ?? 0}
-        activeKeys={overview?.activeClientKeys ?? 0}
-        stats={rangeStats}
-        timeText={timeLabel(filters.timeFilter)}
-      />
-      <KeyFilterCard
-        keyFilter={filters.keyFilter}
-        keys={keysData?.keys ?? []}
-        selectedLabel={selectedKeyLabel}
-        onChange={filters.setKeyFilter}
-        groupFilter={filters.groupFilter}
-        groupOptions={groupOptions}
-        onGroupChange={filters.setGroupFilter}
-      />
-      <TrendCard
-        customEndDate={filters.customEndDate}
-        customStartDate={filters.customStartDate}
-        draftGranularity={filters.draftGranularity}
-        draftRange={filters.draftRange}
-        keyFilter={filters.keyFilter}
-        seriesData={seriesData}
-        timeFilter={filters.timeFilter}
-        onApplyCustomRange={filters.applyCustomRange}
-        onCustomEndDateChange={filters.setCustomEndDate}
-        onCustomStartDateChange={filters.setCustomStartDate}
-        onGranularityChange={filters.setDraftGranularity}
-        onPresetRangeChange={filters.selectPresetRange}
-      />
-      <DistributionPanels
-        byCred={credData}
-        byModel={modelData}
-        timeText={timeLabel(filters.timeFilter)}
-        groupFilterActive={groupFilterActive}
-      />
-      <KeyPanel
-        data={keyData}
-        timeText={timeLabel(filters.timeFilter)}
-        keyFilterActive={filters.keyFilter !== 'all'}
-      />
+
+      {/* 实时状态快速概览条 */}
+      <div id="overview-summary" className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border/70 bg-card/70 p-3 shadow-xs backdrop-blur-sm">
+        <div className="flex flex-wrap items-center gap-4 text-xs">
+          <div className="flex items-center gap-1.5">
+            <span className="relative flex h-2 w-2">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+            </span>
+            <span className="font-semibold text-foreground">网关服务正常运行</span>
+          </div>
+          <div className="h-3 w-px bg-border/80 hidden sm:block" />
+          <div className="flex items-center gap-1 text-muted-foreground">
+            <span>活跃凭据:</span>
+            <span className="font-mono font-semibold text-foreground">{overview?.activeCredentials ?? 0}</span>
+          </div>
+          <div className="h-3 w-px bg-border/80 hidden sm:block" />
+          <div className="flex items-center gap-1 text-muted-foreground">
+            <span>可用入口 Key:</span>
+            <span className="font-mono font-semibold text-foreground">{overview?.activeClientKeys ?? 0}</span>
+          </div>
+          <div className="h-3 w-px bg-border/80 hidden sm:block" />
+          <div className="flex items-center gap-1 text-muted-foreground">
+            <span>近窗口成功率:</span>
+            <span className="font-mono font-semibold text-emerald-600 dark:text-emerald-400">
+              {successRate}%
+            </span>
+          </div>
+        </div>
+        <div className="text-[11px] font-mono text-muted-foreground">
+          负载调度: <span className="text-foreground font-semibold">动态负载均衡 (并发感知)</span>
+        </div>
+      </div>
+
+      <div id="overview-kpi">
+        <StatsCards
+          activeCredentials={overview?.activeCredentials ?? 0}
+          activeKeys={overview?.activeClientKeys ?? 0}
+          stats={rangeStats}
+          timeText={timeLabel(filters.timeFilter)}
+        />
+      </div>
+
+      <div id="overview-filter">
+        <KeyFilterCard
+          keyFilter={filters.keyFilter}
+          keys={keysData?.keys ?? []}
+          selectedLabel={selectedKeyLabel}
+          onChange={filters.setKeyFilter}
+          groupFilter={filters.groupFilter}
+          groupOptions={groupOptions}
+          onGroupChange={filters.setGroupFilter}
+        />
+      </div>
+
+      <div id="overview-trend">
+        <TrendCard
+          customEndDate={filters.customEndDate}
+          customStartDate={filters.customStartDate}
+          draftGranularity={filters.draftGranularity}
+          draftRange={filters.draftRange}
+          keyFilter={filters.keyFilter}
+          seriesData={seriesData}
+          timeFilter={filters.timeFilter}
+          onApplyCustomRange={filters.applyCustomRange}
+          onCustomEndDateChange={filters.setCustomEndDate}
+          onCustomStartDateChange={filters.setCustomStartDate}
+          onGranularityChange={filters.setDraftGranularity}
+          onPresetRangeChange={filters.selectPresetRange}
+        />
+      </div>
+
+      <div id="overview-distribution">
+        <DistributionPanels
+          byCred={credData}
+          byModel={modelData}
+          timeText={timeLabel(filters.timeFilter)}
+          groupFilterActive={groupFilterActive}
+        />
+      </div>
+
+      <div id="overview-keys">
+        <KeyPanel
+          data={keyData}
+          timeText={timeLabel(filters.timeFilter)}
+          keyFilterActive={filters.keyFilter !== 'all'}
+        />
+      </div>
     </div>
   )
 }

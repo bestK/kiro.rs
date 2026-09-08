@@ -25,6 +25,7 @@ import { useConfirm } from '@/components/ui/confirm-dialog'
 import { ConsoleTable, type ConsoleColumn } from '@/components/console/data-table'
 import { BulkBar } from '@/components/console/bulk-bar'
 import { PageHeader } from '@/components/console/page-header'
+import { FloatingSectionNav, type NavSectionItem } from '@/components/console/floating-section-nav'
 import { CreditPriceInput } from '@/components/credit-price-input'
 
 function formatTokens(n: number): string {
@@ -552,8 +553,15 @@ export function ClientKeysPage() {
     </div>
   )
 
+const KEYS_NAV_ITEMS: NavSectionItem[] = [
+  { id: 'keys-header', title: '概览与新建' },
+  { id: 'keys-table', title: '密钥数据列表' },
+]
+
   return (
     <div className="console-scope space-y-4">
+      <FloatingSectionNav items={KEYS_NAV_ITEMS} />
+      <div id="keys-header">
       <PageHeader
         breadcrumbs={[{ label: '控制台' }, { label: '客户端 Key', active: true }]}
         icon={<KeyRound className="h-4 w-4" />}
@@ -582,7 +590,9 @@ export function ClientKeysPage() {
           </>
         }
       />
+      </div>
 
+      <div id="keys-table">
       <ConsoleTable
         rows={keys}
         columns={columns}
@@ -594,6 +604,7 @@ export function ClientKeysPage() {
         loading={isLoading}
         empty="还没有客户端 Key，点击右上角「新建 Key」开始。"
       />
+      </div>
 
       {/* 吸底批量操作栏 */}
       <BulkBar

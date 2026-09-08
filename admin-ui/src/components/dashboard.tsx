@@ -78,6 +78,8 @@ import {
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import { CredentialCard, profileShortId } from "@/components/credential-card";
+import { CredentialTable } from "@/components/credential-table";
+import { FloatingSectionNav, type NavSectionItem } from "@/components/console/floating-section-nav";
 import { AddCredentialDialog } from "@/components/add-credential-dialog";
 import { BatchImportDialog } from "@/components/batch-import-dialog";
 import { BatchEditCredentialDialog } from "@/components/batch-edit-credential-dialog";
@@ -228,6 +230,12 @@ const DEV_PREVIEW_CREDENTIAL: CredentialStatusItem = {
   },
   createdAt: "2026-08-01T10:30:00Z",
 };
+
+const DASHBOARD_NAV_ITEMS: NavSectionItem[] = [
+  { id: "dashboard-toolbar", title: "操作工具栏" },
+  { id: "dashboard-status", title: "状态筛选条" },
+  { id: "dashboard-credentials", title: "凭据数据表" },
+];
 
 // 字段排序：'manual' = 服务端顺序（保留拖拽调优先级）；其余字段选中后拖拽自动禁用
 type SortField =
@@ -1530,11 +1538,10 @@ export function Dashboard({ onLogout, embedded = false }: DashboardProps) {
           }
         />
 
-        {/* 状态标签条已下移到紧贴列表处（见下方 <StatusStrip />）：
-            它是列表的表头兼筛选器，放在标题下方会与它筛选的列表隔开两行工具栏。 */}
+        <FloatingSectionNav items={DASHBOARD_NAV_ITEMS} />
 
         {/* 工具栏 */}
-        <div className="mb-5 flex flex-col gap-3">
+        <div id="dashboard-toolbar" className="mb-5 flex flex-col gap-3">
           <div className="flex min-w-0 flex-wrap items-center gap-2">
             {/* 原先这里有「凭据列表」标题 + 总数徽章：标题与页面大标题「凭据管理」
                 说的是同一件事，总数已由状态标签条的「全部 N」给出，两者都删掉。 */}
@@ -2028,8 +2035,9 @@ export function Dashboard({ onLogout, embedded = false }: DashboardProps) {
           是同一个信号。
         */}
         {(data?.credentials.length ?? 0) > 0 && (
-          <StatusStrip
-            className="mb-2"
+          <div id="dashboard-status">
+            <StatusStrip
+              className="mb-2"
             segments={[
               {
                 label: "全部",
@@ -2095,6 +2103,7 @@ export function Dashboard({ onLogout, embedded = false }: DashboardProps) {
               </div>
             }
           />
+          </div>
         )}
 
         {/* 列表 */}
@@ -2137,6 +2146,7 @@ export function Dashboard({ onLogout, embedded = false }: DashboardProps) {
           </Card>
         ) : (
           <>
+          <div id="dashboard-credentials">
             <DndContext
               sensors={dragSensors}
               collisionDetection={closestCenter}
@@ -2150,36 +2160,48 @@ export function Dashboard({ onLogout, embedded = false }: DashboardProps) {
                     : rectSortingStrategy
                 }
               >
-                <div
-                  className={
-                    viewMode === "list"
-                      ? "flex select-none flex-col gap-2 [transform:translateZ(0)]"
-                      : "grid select-none gap-3 sm:gap-4 md:grid-cols-2 lg:grid-cols-3 [transform:translateZ(0)]"
-                  }
-                >
-                  {currentCredentials.map((credential) => (
-                    <CredentialCard
-                      key={credential.id}
-                      credential={credential}
-                      view={viewMode}
-                      selected={selectedIds.has(credential.id)}
-                      onToggleSelect={toggleSelect}
-                      balance={
-                        balanceMap.get(credential.id) ||
-                        credential.balance ||
-                        null
-                      }
-                      loadingBalance={loadingBalanceIds.has(credential.id)}
-                      onRefreshBalance={handleRefreshBalance}
-                      failureStats={failureStatsMap?.[String(credential.id)]}
-                      dragDisabled={dragDisabled || credential.id === DEV_PREVIEW_CREDENTIAL.id}
-                      preview={credential.id === DEV_PREVIEW_CREDENTIAL.id}
-                      metadataSchema={data?.metadataSchema}
-                    />
-                  ))}
-                </div>
+                {viewMode === "list" ? (
+                  <CredentialTable
+                    credentials={currentCredentials}
+                    selectedIds={selectedIds}
+                    onToggleSelect={toggleSelect}
+                    onSelectAll={toggleSelectCurrentPage}
+                    allSelected={currentPageAllSelected}
+                    balanceMap={balanceMap}
+                    loadingBalanceIds={loadingBalanceIds}
+                    onRefreshBalance={handleRefreshBalance}
+                    failureStatsMap={failureStatsMap}
+                    dragDisabled={dragDisabled}
+                    preview={false}
+                    metadataSchema={data?.metadataSchema}
+                  />
+                ) : (
+                  <div className="grid select-none gap-3 sm:gap-4 md:grid-cols-2 lg:grid-cols-3 [transform:translateZ(0)]">
+                    {currentCredentials.map((credential) => (
+                      <CredentialCard
+                        key={credential.id}
+                        credential={credential}
+                        view={viewMode}
+                        selected={selectedIds.has(credential.id)}
+                        onToggleSelect={toggleSelect}
+                        balance={
+                          balanceMap.get(credential.id) ||
+                          credential.balance ||
+                          null
+                        }
+                        loadingBalance={loadingBalanceIds.has(credential.id)}
+                        onRefreshBalance={handleRefreshBalance}
+                        failureStats={failureStatsMap?.[String(credential.id)]}
+                        dragDisabled={dragDisabled || credential.id === DEV_PREVIEW_CREDENTIAL.id}
+                        preview={credential.id === DEV_PREVIEW_CREDENTIAL.id}
+                        metadataSchema={data?.metadataSchema}
+                      />
+                    ))}
+                  </div>
+                )}
               </SortableContext>
             </DndContext>
+          </div>
 
             {/* 隔开与 BulkBar 吸底栏的垂直安全间距 */}
             <div className="h-6 sm:h-8" />

@@ -1717,6 +1717,10 @@ impl AdminService {
                     metadata,
                     balance,
                     balance_updated_at,
+                    throttled_remaining_secs: entry.throttled_remaining_secs,
+                    in_flight: entry.in_flight,
+                    current_rpm: entry.current_rpm,
+                    rpm_limit: entry.rpm_limit,
                     created_at: entry.created_at,
                 }
             })

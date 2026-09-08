@@ -1172,7 +1172,7 @@ function CredentialCardImpl({
 
           <CardContent className="flex flex-1 flex-col p-4 space-y-3.5">
             {/* 核心指标 (Metrics Grid) */}
-            <div className="grid grid-cols-3 divide-x divide-border/30 text-center py-1">
+            <div className="grid grid-cols-4 divide-x divide-border/30 text-center py-1">
               {/* Priority */}
               <div className="flex flex-col items-center justify-center px-1">
                 <span className="text-[10px] font-semibold text-muted-foreground/80 uppercase tracking-wider">
@@ -1219,6 +1219,30 @@ function CredentialCardImpl({
                     <Pencil className="h-2.5 w-2.5 opacity-60" />
                   </button>
                 )}
+              </div>
+
+              {/* 并发 / RPM 调度 */}
+              <div className="flex flex-col items-center justify-center px-1">
+                <span className="text-[10px] font-semibold text-muted-foreground/80 uppercase tracking-wider">
+                  并发/RPM
+                </span>
+                <div className="mt-0.5 flex flex-col items-center leading-tight">
+                  <span
+                    className={cn(
+                      "inline-flex items-center gap-0.5 font-mono text-xs font-semibold tabular-nums",
+                      (credential.inFlight ?? 0) > 0 ? "text-amber-600 dark:text-amber-400 font-bold animate-pulse" : "text-foreground/90"
+                    )}
+                    title={`当前在途并发: ${credential.inFlight ?? 0}`}
+                  >
+                    ⚡{credential.inFlight ?? 0}
+                  </span>
+                  <span
+                    className="text-[10px] font-mono tabular-nums text-muted-foreground"
+                    title="近 60 秒请求频次"
+                  >
+                    {credential.currentRpm ?? 0} rpm
+                  </span>
+                </div>
               </div>
 
               {/* Success */}

@@ -114,6 +114,23 @@ export interface CredentialStatusItem {
   createdAt?: string
 }
 
+// 凭据列表排序字段：'manual' = 服务端顺序（保留拖拽调优先级）；其余字段选中后拖拽自动禁用
+export type CredentialSortField =
+  | 'manual'
+  | 'priority'
+  | 'inFlight'
+  | 'currentRpm'
+  | 'successCount'
+  | 'totalFailureCount'
+  | 'balance'
+  | 'lastUsedAt'
+  | 'name'
+  | 'status'
+  | 'createdAt'
+  | 'id'
+
+export type SortDir = 'asc' | 'desc'
+
 // 余额响应
 export interface BalanceResponse {
   id: number

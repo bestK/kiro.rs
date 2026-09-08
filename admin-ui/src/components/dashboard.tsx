@@ -144,7 +144,12 @@ import {
   generateApiKey,
   overageFailureMessage,
 } from "@/lib/utils";
-import type { BalanceResponse, CredentialStatusItem } from "@/types/api";
+import type {
+  BalanceResponse,
+  CredentialSortField as SortField,
+  CredentialStatusItem,
+  SortDir,
+} from "@/types/api";
 import { StatusStrip } from "@/components/console/status-strip";
 import { BulkBar } from "@/components/console/bulk-bar";
 import {
@@ -238,28 +243,33 @@ const DASHBOARD_NAV_ITEMS: NavSectionItem[] = [
 ];
 
 // 字段排序：'manual' = 服务端顺序（保留拖拽调优先级）；其余字段选中后拖拽自动禁用
-type SortField =
-  | "manual"
-  | "priority"
-  | "successCount"
-  | "totalFailureCount"
-  | "lastUsedAt"
-  | "id";
-type SortDir = "asc" | "desc";
 const SORT_OPTIONS: { value: Exclude<SortField, "manual">; label: string }[] = [
   { value: "priority", label: "优先级" },
+  { value: "inFlight", label: "在途并发" },
+  { value: "currentRpm", label: "实时 RPM" },
   { value: "successCount", label: "成功次数" },
   { value: "totalFailureCount", label: "累计失败" },
-  { value: "lastUsedAt", label: "最后使用" },
-  { value: "id", label: "ID" },
+  { value: "balance", label: "余额 / 配额" },
+  { value: "lastUsedAt", label: "活跃时间" },
+  { value: "name", label: "账号标识" },
+  { value: "status", label: "运行状态" },
+  { value: "createdAt", label: "创建时间" },
+  { value: "id", label: "凭据 ID" },
 ];
+
 const SORT_LABELS: Record<SortField, string> = {
   manual: "手动顺序",
   priority: "优先级",
+  inFlight: "在途并发",
+  currentRpm: "实时 RPM",
   successCount: "成功次数",
   totalFailureCount: "累计失败",
-  lastUsedAt: "最后使用",
-  id: "ID",
+  balance: "余额 / 配额",
+  lastUsedAt: "活跃时间",
+  name: "账号标识",
+  status: "运行状态",
+  createdAt: "创建时间",
+  id: "凭据 ID",
 };
 
 // 注：PR #56 的 StatusKey / STATUS_OPTIONS / credentialHasStatus 已随「隐藏状态」
@@ -421,8 +431,17 @@ export function Dashboard({ onLogout, embedded = false }: DashboardProps) {
       return;
     }
     setSortField(field);
-    // 成功次数/最后使用默认降序（大/新在前），其余默认升序
-    setSortDir(field === "successCount" || field === "lastUsedAt" ? "desc" : "asc");
+    // 并发、RPM、成功次数、失败次数、余额、最后活跃、创建时间 默认降序（数值大/时间新排在前面）
+    const descByDefault = new Set<SortField>([
+      "inFlight",
+      "currentRpm",
+      "successCount",
+      "totalFailureCount",
+      "balance",
+      "lastUsedAt",
+      "createdAt",
+    ]);
+    setSortDir(descByDefault.has(field) ? "desc" : "asc");
   };
   // 状态筛选：由顶部状态账条驱动。'' = 全部
   //
@@ -490,8 +509,23 @@ export function Dashboard({ onLogout, embedded = false }: DashboardProps) {
             else cmp = ta - tb;
             break;
           }
+          case "createdAt": {
+            const ca = a.createdAt ? Date.parse(a.createdAt) : null;
+            const cb = b.createdAt ? Date.parse(b.createdAt) : null;
+            if (ca === null && cb === null) cmp = 0;
+            else if (ca === null) return 1;
+            else if (cb === null) return -1;
+            else cmp = ca - cb;
+            break;
+          }
           case "priority":
             cmp = a.priority - b.priority;
+            break;
+          case "inFlight":
+            cmp = (a.inFlight ?? 0) - (b.inFlight ?? 0);
+            break;
+          case "currentRpm":
+            cmp = (a.currentRpm ?? 0) - (b.currentRpm ?? 0);
             break;
           case "successCount":
             cmp = a.successCount - b.successCount;
@@ -499,6 +533,39 @@ export function Dashboard({ onLogout, embedded = false }: DashboardProps) {
           case "totalFailureCount":
             cmp = a.totalFailureCount - b.totalFailureCount;
             break;
+          case "name": {
+            const na = (a.email || a.sourceChannel || `凭据 #${a.id}`).toLowerCase();
+            const nb = (b.email || b.sourceChannel || `凭据 #${b.id}`).toLowerCase();
+            cmp = na.localeCompare(nb);
+            break;
+          }
+          case "status": {
+            const rankStatus = (c: CredentialStatusItem): number => {
+              if (c.disabled) return 3;
+              if ((c.throttledRemainingSecs ?? 0) > 0) return 2;
+              if (c.isCurrent) return 0;
+              return 1;
+            };
+            cmp = rankStatus(a) - rankStatus(b);
+            break;
+          }
+          case "balance": {
+            const balA = balanceMap.get(a.id) ?? a.balance;
+            const balB = balanceMap.get(b.id) ?? b.balance;
+            const remA = balA?.remaining !== undefined ? balA.remaining : null;
+            const remB = balB?.remaining !== undefined ? balB.remaining : null;
+            if (remA === null && remB === null) {
+              const pctA = balA?.usagePercentage !== undefined ? balA.usagePercentage : null;
+              const pctB = balB?.usagePercentage !== undefined ? balB.usagePercentage : null;
+              if (pctA === null && pctB === null) cmp = 0;
+              else if (pctA === null) return 1;
+              else if (pctB === null) return -1;
+              else cmp = pctB - pctA;
+            } else if (remA === null) return 1;
+            else if (remB === null) return -1;
+            else cmp = remA - remB;
+            break;
+          }
           case "id":
             cmp = a.id - b.id;
             break;
@@ -2174,6 +2241,9 @@ export function Dashboard({ onLogout, embedded = false }: DashboardProps) {
                     dragDisabled={dragDisabled}
                     preview={false}
                     metadataSchema={data?.metadataSchema}
+                    sortField={sortField}
+                    sortDir={sortDir}
+                    onSort={applySort}
                   />
                 ) : (
                   <div className="grid select-none gap-3 sm:gap-4 md:grid-cols-2 lg:grid-cols-3 [transform:translateZ(0)]">

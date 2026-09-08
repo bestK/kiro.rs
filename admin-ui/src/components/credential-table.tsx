@@ -17,6 +17,9 @@ import {
   Copy,
   ScrollText,
   Boxes,
+  ArrowUp,
+  ArrowDown,
+  ArrowUpDown,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
@@ -44,6 +47,8 @@ import type {
   CredentialMetadataSchema,
   CredentialStatusItem,
   BalanceResponse,
+  CredentialSortField,
+  SortDir,
 } from "@/types/api";
 import { maskProxyUrl, extractErrorMessage, formatNumber, cn } from "@/lib/utils";
 import {
@@ -79,6 +84,65 @@ interface CredentialTableProps {
   dragDisabled?: boolean;
   preview?: boolean;
   metadataSchema?: CredentialMetadataSchema;
+  sortField?: CredentialSortField;
+  sortDir?: SortDir;
+  onSort?: (field: CredentialSortField) => void;
+}
+
+interface TableSortHeaderProps {
+  field: CredentialSortField;
+  activeFields?: CredentialSortField[];
+  currentField?: CredentialSortField;
+  sortDir?: SortDir;
+  onSort?: (field: CredentialSortField) => void;
+  title?: string;
+  className?: string;
+  children: React.ReactNode;
+}
+
+function TableSortHeader({
+  field,
+  activeFields,
+  currentField,
+  sortDir,
+  onSort,
+  title,
+  className,
+  children,
+}: TableSortHeaderProps) {
+  const isMatch = activeFields
+    ? activeFields.includes(currentField as CredentialSortField)
+    : currentField === field;
+
+  return (
+    <th
+      className={cn(
+        "px-2.5 py-2.5 group select-none transition-colors",
+        onSort ? "cursor-pointer hover:bg-muted/80 hover:text-foreground" : "",
+        isMatch ? "text-foreground font-bold bg-muted/40" : "",
+        className
+      )}
+      onClick={() => onSort?.(field)}
+      title={title || "点击排序（再次点击切换升/降序）"}
+    >
+      <div className="inline-flex items-center gap-1">
+        <span>{children}</span>
+        {onSort && (
+          <span className="shrink-0 transition-opacity">
+            {isMatch ? (
+              sortDir === "asc" ? (
+                <ArrowUp className="h-3 w-3 text-primary animate-in fade-in duration-150" />
+              ) : (
+                <ArrowDown className="h-3 w-3 text-primary animate-in fade-in duration-150" />
+              )
+            ) : (
+              <ArrowUpDown className="h-2.5 w-2.5 text-muted-foreground/30 group-hover:text-muted-foreground/80 opacity-0 group-hover:opacity-100 transition-all" />
+            )}
+          </span>
+        )}
+      </div>
+    </th>
+  );
 }
 
 function formatLastUsed(lastUsedAt: string | null): string {
@@ -119,6 +183,9 @@ export function CredentialTable({
   dragDisabled = false,
   preview = false,
   metadataSchema,
+  sortField,
+  sortDir,
+  onSort,
 }: CredentialTableProps) {
   return (
     <div className="overflow-x-auto rounded-xl border border-border/70 bg-card shadow-xs select-none">
@@ -139,37 +206,85 @@ export function CredentialTable({
             </th>
 
             {/* 账号 / 标识 */}
-            <th className="min-w-[200px] px-2.5 py-2.5">
+            <TableSortHeader
+              field="name"
+              activeFields={["name", "id"]}
+              currentField={sortField}
+              sortDir={sortDir}
+              onSort={onSort}
+              className="min-w-[200px]"
+              title="点击按账号标识字母排序（再次点击切换升/降序）"
+            >
               凭据账号 / 标识
-            </th>
+            </TableSortHeader>
 
             {/* 状态与处置 */}
-            <th className="min-w-[110px] px-2.5 py-2.5">
+            <TableSortHeader
+              field="status"
+              activeFields={["status"]}
+              currentField={sortField}
+              sortDir={sortDir}
+              onSort={onSort}
+              className="min-w-[110px]"
+              title="点击按运行状态健康度排序"
+            >
               运行状态
-            </th>
+            </TableSortHeader>
 
             {/* 并发与 RPM 调度情况 */}
-            <th className="min-w-[125px] px-2.5 py-2.5">
-              <div className="flex items-center gap-1" title="在途并发请求数与近 60 秒滑动窗口请求数">
+            <TableSortHeader
+              field="inFlight"
+              activeFields={["inFlight", "currentRpm"]}
+              currentField={sortField}
+              sortDir={sortDir}
+              onSort={onSort}
+              className="min-w-[125px]"
+              title="点击按当前在途并发数排序（再次点击切换升/降序）"
+            >
+              <div className="flex items-center gap-1">
                 <span>并发与 RPM</span>
                 <Zap className="h-3 w-3 text-amber-500" />
               </div>
-            </th>
+            </TableSortHeader>
 
             {/* 调度优先级 */}
-            <th className="min-w-[85px] px-2.5 py-2.5">
+            <TableSortHeader
+              field="priority"
+              activeFields={["priority"]}
+              currentField={sortField}
+              sortDir={sortDir}
+              onSort={onSort}
+              className="min-w-[85px]"
+              title="点击按调度优先级排序（数值小优先）"
+            >
               优先级
-            </th>
+            </TableSortHeader>
 
             {/* 成功 / 失败 */}
-            <th className="min-w-[105px] px-2.5 py-2.5">
+            <TableSortHeader
+              field="successCount"
+              activeFields={["successCount", "totalFailureCount"]}
+              currentField={sortField}
+              sortDir={sortDir}
+              onSort={onSort}
+              className="min-w-[105px]"
+              title="点击按成功调用次数排序"
+            >
               调用统计
-            </th>
+            </TableSortHeader>
 
             {/* 余额 / 配额 */}
-            <th className="min-w-[130px] px-2.5 py-2.5">
+            <TableSortHeader
+              field="balance"
+              activeFields={["balance"]}
+              currentField={sortField}
+              sortDir={sortDir}
+              onSort={onSort}
+              className="min-w-[130px]"
+              title="点击按剩余余额 / 可用额度排序"
+            >
               余额 / 配额
-            </th>
+            </TableSortHeader>
 
             {/* 路由 / 代理 */}
             <th className="min-w-[105px] px-2.5 py-2.5">
@@ -177,9 +292,17 @@ export function CredentialTable({
             </th>
 
             {/* 时间 */}
-            <th className="min-w-[100px] px-2.5 py-2.5">
+            <TableSortHeader
+              field="lastUsedAt"
+              activeFields={["lastUsedAt", "createdAt"]}
+              currentField={sortField}
+              sortDir={sortDir}
+              onSort={onSort}
+              className="min-w-[100px]"
+              title="点击按最近活跃使用时间排序"
+            >
               活跃时间
-            </th>
+            </TableSortHeader>
 
             {/* 操作 */}
             <th className="min-w-[135px] py-2.5 pl-2.5 pr-4 text-right">

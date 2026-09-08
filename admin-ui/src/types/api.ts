@@ -1,12 +1,38 @@
+// 凭据状态统计
+export interface CredentialCounts {
+  healthy: number
+  current?: number
+  throttled: number
+  quota: number
+  dead: number
+  total: number
+}
+
 // 凭据状态响应
 export interface CredentialsStatusResponse {
   total: number
+  filteredTotal?: number
   available: number
+  page?: number
+  pageSize?: number
+  stateCounts?: CredentialCounts
   /** 优先级模式下的当前优先凭据 ID；均衡模式为 0 */
   currentId: number
   /** 描述 metadata 字段、值类型和选项的 JSON Schema */
   metadataSchema: CredentialMetadataSchema
   credentials: CredentialStatusItem[]
+}
+
+// 凭据查询参数
+export interface CredentialQueryParams {
+  page?: number
+  pageSize?: number
+  search?: string
+  group?: string
+  status?: string
+  tier?: string
+  sortField?: CredentialSortField
+  sortDir?: SortDir
 }
 
 export type CredentialType = 'normal' | 'boom'
@@ -492,7 +518,20 @@ export interface ClientKeyItem {
 
 export interface ClientKeysResponse {
   total: number
+  filteredTotal?: number
+  page?: number
+  pageSize?: number
   keys: ClientKeyItem[]
+}
+
+export interface ClientKeyQueryParams {
+  page?: number
+  pageSize?: number
+  search?: string
+  status?: string
+  group?: string
+  sortBy?: string
+  sortDir?: SortDir
 }
 
 export interface CreateClientKeyRequest {
@@ -737,7 +776,16 @@ export interface GroupItem {
 
 export interface GroupsResponse {
   total: number
+  filteredTotal?: number
+  page?: number
+  pageSize?: number
   groups: GroupItem[]
+}
+
+export interface GroupQueryParams {
+  page?: number
+  pageSize?: number
+  search?: string
 }
 
 export interface CreateGroupRequest {

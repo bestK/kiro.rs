@@ -148,6 +148,7 @@ import type {
   BalanceResponse,
   CredentialSortField as SortField,
   CredentialStatusItem,
+  CredentialQueryParams,
   SortDir,
 } from "@/types/api";
 import { StatusStrip } from "@/components/console/status-strip";
@@ -348,33 +349,6 @@ export function Dashboard({ onLogout, embedded = false }: DashboardProps) {
     return false;
   });
 
-  const queryClient = useQueryClient();
-  const { data, isLoading, error, refetch } = useCredentials();
-  const { mutate: deleteCredential } = useDeleteCredential();
-  const { mutate: resetFailure } = useResetFailure();
-  const { data: loadBalancingData, isLoading: isLoadingMode } =
-    useLoadBalancingMode();
-  const { mutate: setLoadBalancingMode, isPending: isSettingMode } =
-    useSetLoadBalancingMode();
-  const resetAllSuccess = useResetAllSuccessCount();
-  const setPriority = useSetPriority();
-  const { data: updateCheck } = useUpdateCheck();
-  const { data: failureStatsMap } = useFailureStats();
-  const groupOptions = useGroupOptions();
-  const allCredentials = import.meta.env.DEV
-    ? [DEV_PREVIEW_CREDENTIAL, ...(data?.credentials ?? [])]
-    : (data?.credentials ?? []);
-
-  // 按 profile 分组：上游 prompt cache 按 profile 隔离，同 profile 的账号共享缓存。
-  // 只有一个 profile 时，会话在账号间换号不会丢缓存；多个 profile 才需要关心粘性路由。
-  const profileSummary = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const c of allCredentials) {
-      if (c.profileArn) counts.set(c.profileArn, (counts.get(c.profileArn) ?? 0) + 1);
-    }
-    return Array.from(counts.entries()).sort((a, b) => b[1] - a[1]);
-  }, [allCredentials]);
-
   // 分组筛选：'' = 全部；'__none__' = 仅显示未分组；其他 = 按分组名筛选
   const [groupFilter, setGroupFilter] = useState<string>("");
   // 订阅分级筛选（多选）：空集合 = 全部分级；否则只显示集合内的分级
@@ -444,10 +418,6 @@ export function Dashboard({ onLogout, embedded = false }: DashboardProps) {
     setSortDir(descByDefault.has(field) ? "desc" : "asc");
   };
   // 状态筛选：由顶部状态账条驱动。'' = 全部
-  //
-  // 默认落在「可用」而非全部：这一屏最常做的事是调排队顺序，而只有可用凭据才真的
-  // 在队列里 —— 混进禁用/超额的行会让拖拽出来的次序与实际调度顺序对不上。
-  // 其余状态的计数仍在账条上，点一下即可切过去。
   const [stateFilter, setStateFilter] = useState<StateFilter>("healthy");
   const clearAllFilters = () => {
     setSearchQuery("");
@@ -464,8 +434,77 @@ export function Dashboard({ onLogout, embedded = false }: DashboardProps) {
     });
   };
 
-  // 应用分组 + 分级筛选后的凭据全集（分页前先过滤，确保翻页粒度正确）
-  const filteredCredentials = useMemo(() => {
+  // 切换分组 / 分级筛选 / 搜索 / 状态 / 排序时复位到第 1 页，避免空页
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [groupFilter, tierFilter, deferredSearchQuery, stateFilter, sortField, sortDir]);
+
+  // 服务端查询参数构建
+  const credentialQueryParams = useMemo<CredentialQueryParams>(() => {
+    const singleTier = tierFilter.size === 1 ? Array.from(tierFilter)[0] : undefined;
+    return {
+      page: currentPage,
+      pageSize: pageSize === 0 ? 0 : pageSize,
+      search: deferredSearchQuery.trim() || undefined,
+      group: groupFilter || undefined,
+      status: stateFilter || undefined,
+      tier: singleTier ? singleTier.toLowerCase() : undefined,
+      sortField: sortField,
+      sortDir: sortDir,
+    };
+  }, [currentPage, pageSize, deferredSearchQuery, groupFilter, stateFilter, tierFilter, sortField, sortDir]);
+
+  const queryClient = useQueryClient();
+  const { data, isLoading, error, refetch } = useCredentials(credentialQueryParams);
+  const { mutate: deleteCredential } = useDeleteCredential();
+  const { mutate: resetFailure } = useResetFailure();
+  const { data: loadBalancingData, isLoading: isLoadingMode } =
+    useLoadBalancingMode();
+  const { mutate: setLoadBalancingMode, isPending: isSettingMode } =
+    useSetLoadBalancingMode();
+  const resetAllSuccess = useResetAllSuccessCount();
+  const setPriority = useSetPriority();
+  const { data: updateCheck } = useUpdateCheck();
+  const { data: failureStatsMap } = useFailureStats();
+  const groupOptions = useGroupOptions();
+  const allCredentials = import.meta.env.DEV
+    ? [DEV_PREVIEW_CREDENTIAL, ...(data?.credentials ?? [])]
+    : (data?.credentials ?? []);
+
+  // 按 profile 分组：上游 prompt cache 按 profile 隔离，同 profile 的账号共享缓存。
+  // 只有一个 profile 时，会话在账号间换号不会丢缓存；多个 profile 才需要关心粘性路由。
+  const profileSummary = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const c of allCredentials) {
+      if (c.profileArn) counts.set(c.profileArn, (counts.get(c.profileArn) ?? 0) + 1);
+    }
+    return Array.from(counts.entries()).sort((a, b) => b[1] - a[1]);
+  }, [allCredentials]);
+
+  // 判断后端是否已支持服务端分页（返回 filteredTotal）
+  const isServerPaginated = data?.filteredTotal !== undefined;
+
+  // 各状态计数（状态账条用）。优先采用后端全局统计，避免当前页数据被筛选/分页截断后账条失真
+  const stateCounts = useMemo(() => {
+    if (data?.stateCounts) {
+      return {
+        healthy: data.stateCounts.healthy,
+        current: data.stateCounts.current ?? 0,
+        throttled: data.stateCounts.throttled,
+        quota: data.stateCounts.quota,
+        dead: data.stateCounts.dead,
+        total: data.stateCounts.total,
+      };
+    }
+    return countByState(
+      data?.credentials ?? [],
+      (c) => balanceMap.get(c.id) ?? c.balance,
+    );
+  }, [data?.stateCounts, data?.credentials, balanceMap]);
+
+  // 当后端未分页时（如连接旧版后端），回退到前端内存筛选与排序
+  const clientFilteredCredentials = useMemo(() => {
+    if (isServerPaginated) return allCredentials;
     const all = allCredentials;
     let out = all;
     if (groupFilter) {
@@ -575,30 +614,25 @@ export function Dashboard({ onLogout, embedded = false }: DashboardProps) {
       });
     }
     return out;
-  }, [allCredentials, groupFilter, tierFilter, deferredSearchQuery, stateFilter, balanceMap, sortField, sortDir]);
+  }, [isServerPaginated, allCredentials, groupFilter, tierFilter, deferredSearchQuery, stateFilter, balanceMap, sortField, sortDir]);
 
-  // 各状态计数（状态账条用）。基于全量凭据而非当前筛选结果 ——
-  // 账条是导航器，点进某一段之后其余段的数字不该跟着变。
-  const stateCounts = countByState(
-    data?.credentials ?? [],
-    (c) => balanceMap.get(c.id) ?? c.balance,
-  );
-
-  // 切换分组 / 分级筛选 / 搜索 / 状态 / 排序时复位到第 1 页，避免空页
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [groupFilter, tierFilter, deferredSearchQuery, stateFilter, sortField, sortDir]);
+  // 筛选后的总条数（用于分页计算）
+  const totalFilteredCount = isServerPaginated
+    ? (data?.filteredTotal ?? data?.credentials?.length ?? 0) + (import.meta.env.DEV ? 1 : 0)
+    : clientFilteredCredentials.length;
 
   // pageSize === 0 表示“全部”：单页容纳全部已筛选凭据
   const effectivePageSize =
-    pageSize === 0 ? Math.max(filteredCredentials.length, 1) : pageSize;
+    pageSize === 0 ? Math.max(totalFilteredCount, 1) : pageSize;
   const totalPages = Math.max(
     1,
-    Math.ceil(filteredCredentials.length / effectivePageSize),
+    Math.ceil(totalFilteredCount / effectivePageSize),
   );
   const startIndex = (currentPage - 1) * effectivePageSize;
   const endIndex = startIndex + effectivePageSize;
-  const serverPageCreds = filteredCredentials.slice(startIndex, endIndex);
+  const serverPageCreds = isServerPaginated
+    ? allCredentials
+    : clientFilteredCredentials.slice(startIndex, endIndex);
   // 拖拽排序的本地乐观顺序：仅当 id 集合与当前页一致时生效，否则回落到服务端顺序，
   // 避免翻页 / 数据变更后顺序错乱。
   const [pageOrder, setPageOrder] = useState<number[] | null>(null);
@@ -619,7 +653,9 @@ export function Dashboard({ onLogout, embedded = false }: DashboardProps) {
   const currentPageAllSelected =
     currentPageIds.length > 0 &&
     currentPageIds.every((id) => selectedIds.has(id));
-  const allFilteredIds = filteredCredentials.map((c) => c.id);
+  const allFilteredIds = isServerPaginated
+    ? currentPageIds
+    : clientFilteredCredentials.map((c) => c.id);
   const allFilteredSelected =
     allFilteredIds.length > 0 &&
     allFilteredIds.every((id) => selectedIds.has(id));
@@ -1874,7 +1910,7 @@ export function Dashboard({ onLogout, embedded = false }: DashboardProps) {
                   {currentPageAllSelected ? "取消全选" : "全选当前页"}
                 </Button>
               )}
-              {filteredCredentials.length > currentCredentials.length && (
+              {totalFilteredCount > currentCredentials.length && (
                 <Button
                   size="sm"
                   variant="outline"
@@ -1883,13 +1919,13 @@ export function Dashboard({ onLogout, embedded = false }: DashboardProps) {
                   title={
                     allFilteredSelected
                       ? "取消选择全部筛选结果"
-                      : `全选所有 ${filteredCredentials.length} 个筛选结果`
+                      : `全选所有 ${totalFilteredCount} 个筛选结果`
                   }
                 >
                   <CheckSquare className="h-3.5 w-3.5" />
                   {allFilteredSelected
                     ? "取消全选所有页"
-                    : `全选所有页 (${filteredCredentials.length})`}
+                    : `全选所有页 (${totalFilteredCount})`}
                 </Button>
               )}
 
@@ -2185,7 +2221,7 @@ export function Dashboard({ onLogout, embedded = false }: DashboardProps) {
               </p>
             </CardContent>
           </Card>
-        ) : filteredCredentials.length === 0 ? (
+        ) : totalFilteredCount === 0 ? (
           /*
             有凭据但当前筛选下一个都不剩。默认筛「可用」时这很容易发生（全池超额
             或全被禁用），此时说"暂无凭据，去添加"是假话 —— 凭据在，只是都不健康。
@@ -2354,7 +2390,7 @@ export function Dashboard({ onLogout, embedded = false }: DashboardProps) {
               </Button>
             </BulkBar>
 
-            {filteredCredentials.length > 0 && (
+            {totalFilteredCount > 0 && (
               <div className="mt-6 flex flex-col items-center justify-center gap-3 sm:mt-8 sm:flex-row sm:gap-5">
                 {/* 每页数量 */}
                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -2399,7 +2435,7 @@ export function Dashboard({ onLogout, embedded = false }: DashboardProps) {
                       </span>{" "}
                       / {totalPages} 页
                       <span className="mx-1.5 text-muted-foreground/50">·</span>
-                      共 {filteredCredentials.length} 个
+                      共 {totalFilteredCount} 个
                     </div>
                     <Button
                       variant="outline"

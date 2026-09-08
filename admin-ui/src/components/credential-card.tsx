@@ -1229,12 +1229,17 @@ function CredentialCardImpl({
                 <div className="mt-0.5 flex flex-col items-center leading-tight">
                   <span
                     className={cn(
-                      "inline-flex items-center gap-0.5 font-mono text-xs font-semibold tabular-nums",
+                      "inline-flex items-center gap-1 font-mono text-xs font-semibold tabular-nums",
                       (credential.inFlight ?? 0) > 0 ? "text-amber-600 dark:text-amber-400 font-bold animate-pulse" : "text-foreground/90"
                     )}
                     title={`当前在途并发: ${credential.inFlight ?? 0}`}
                   >
-                    ⚡{credential.inFlight ?? 0}
+                    {(credential.inFlight ?? 0) > 0 ? (
+                      <Zap className="h-3 w-3 text-amber-500 fill-current" />
+                    ) : (
+                      <Zap className="h-3 w-3 text-muted-foreground/40" />
+                    )}
+                    {credential.inFlight ?? 0}
                   </span>
                   <span
                     className="text-[10px] font-mono tabular-nums text-muted-foreground"

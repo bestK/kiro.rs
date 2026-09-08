@@ -588,8 +588,9 @@ function HeroKpiGrid({
             </div>
           </div>
           <div className="mt-2.5 flex items-baseline justify-between gap-1">
-            <span className="font-mono text-2xl font-bold tracking-tight text-foreground tabular-nums flex items-center gap-1">
-              ⚡ {inFlightTotal}
+            <span className="font-mono text-2xl font-bold tracking-tight text-foreground tabular-nums flex items-center gap-1.5">
+              <Zap className={cn("h-5 w-5 shrink-0", inFlightTotal > 0 ? "text-amber-500 fill-amber-500/30 animate-pulse" : "text-amber-500/60")} />
+              {inFlightTotal}
               <span className="text-xs font-normal text-muted-foreground">在途</span>
             </span>
             <span className="font-mono text-xs text-muted-foreground">{currentRpmTotal} RPM</span>

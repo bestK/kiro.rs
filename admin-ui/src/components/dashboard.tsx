@@ -795,9 +795,12 @@ export function Dashboard({ onLogout, embedded = false }: DashboardProps) {
   const overageEnableableCount = overageStats.disabledOff;
   const overageRetryableCount = overageStats.disabledOff + overageStats.unknown;
 
+  // 当总页数变小（如删除凭据后）且当前页超出总页数时，自动修正到最后一页
   useEffect(() => {
-    setCurrentPage(1);
-  }, [data?.credentials.length]);
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [currentPage, totalPages]);
 
   useEffect(() => {
     if (!data?.credentials) {
@@ -2423,7 +2426,7 @@ export function Dashboard({ onLogout, embedded = false }: DashboardProps) {
                       variant="outline"
                       size="sm"
                       onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-                      disabled={currentPage === 1}
+                      disabled={currentPage <= 1}
                     >
                       <ChevronLeft className="h-3.5 w-3.5" />
                       上一页
@@ -2443,7 +2446,7 @@ export function Dashboard({ onLogout, embedded = false }: DashboardProps) {
                       onClick={() =>
                         setCurrentPage((p) => Math.min(totalPages, p + 1))
                       }
-                      disabled={currentPage === totalPages}
+                      disabled={currentPage >= totalPages}
                     >
                       下一页
                       <ChevronRight className="h-3.5 w-3.5" />

@@ -1836,12 +1836,12 @@ impl AdminService {
                                 return false;
                             }
                         }
-                        "disabled" => {
+                        "disabled" | "dead" => {
                             if !c.disabled {
                                 return false;
                             }
                         }
-                        "overage" => {
+                        "overage" | "quota" => {
                             if !is_overage {
                                 return false;
                             }

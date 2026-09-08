@@ -13,9 +13,12 @@ import type { TimeSeriesPoint, StatsGranularity } from '@/types/api'
 import { tooltipCursorStyle } from './tooltip-style'
 import { formatCredits, formatNumber } from '@/lib/utils'
 
+export type ChartMetricMode = 'tokens' | 'calls' | 'credits'
+
 interface Props {
   data: TimeSeriesPoint[]
   granularity: StatsGranularity
+  mode?: ChartMetricMode
 }
 
 const COLORS = {
@@ -24,15 +27,26 @@ const COLORS = {
   cacheCreation: '#f59e0b',
   cacheRead: '#06b6d4',
   cacheHitRate: '#a855f7',
+  calls: '#3b82f6',
+  errors: '#ef4444',
   credits: '#ec4899',
 } as const
 
-const SERIES = [
+const TOKEN_SERIES = [
   { key: 'inputTokens', name: '输入', color: COLORS.input, axis: 'left' as const, kind: 'tokens' as const },
   { key: 'outputTokens', name: '输出', color: COLORS.output, axis: 'left' as const, kind: 'tokens' as const },
   { key: 'cacheCreationTokens', name: '缓存写', color: COLORS.cacheCreation, axis: 'left' as const, kind: 'tokens' as const },
   { key: 'cacheReadTokens', name: '缓存读', color: COLORS.cacheRead, axis: 'left' as const, kind: 'tokens' as const },
   { key: 'cacheHitRate', name: '命中率', color: COLORS.cacheHitRate, axis: 'right' as const, kind: 'percent' as const },
+]
+
+const CALLS_SERIES = [
+  { key: 'calls', name: '请求调用量', color: COLORS.calls, axis: 'left' as const, kind: 'number' as const },
+  { key: 'errors', name: '异常调用', color: COLORS.errors, axis: 'left' as const, kind: 'number' as const },
+]
+
+const CREDITS_SERIES = [
+  { key: 'credits', name: 'Credit 消耗', color: COLORS.credits, axis: 'left' as const, kind: 'credits' as const },
 ]
 
 interface ChartPoint extends TimeSeriesPoint {
@@ -60,7 +74,12 @@ function pickXAxisInterval(len: number): number | 'preserveStartEnd' {
   return Math.ceil(len / 16)
 }
 
-function ChartTooltip({ active, payload, label }: {
+function ChartTooltip({
+  active,
+  payload,
+  label,
+  mode = 'tokens',
+}: {
   active?: boolean
   payload?: ReadonlyArray<{
     dataKey?: string | number
@@ -69,6 +88,7 @@ function ChartTooltip({ active, payload, label }: {
     payload?: ChartPoint
   }>
   label?: string
+  mode?: ChartMetricMode
 }) {
   if (!active || !payload?.length) return null
   const map = new Map<string, number>()
@@ -77,12 +97,17 @@ function ChartTooltip({ active, payload, label }: {
       map.set(p.dataKey, p.value)
     }
   })
+
+  const series = mode === 'calls' ? CALLS_SERIES : mode === 'credits' ? CREDITS_SERIES : TOKEN_SERIES
   const credits = payload[0]?.payload?.credits ?? 0
+
   return (
     <div style={TOOLTIP_STYLE}>
       <div style={{ fontWeight: 600, marginBottom: 6, color: 'rgba(255,255,255,0.92)' }}>{label}</div>
-      {SERIES.map((s) => <TooltipRow key={s.key} entry={s} value={map.get(s.key)} />)}
-      {credits > 0 && <CreditTooltipRow credits={credits} />}
+      {series.map((s) => (
+        <TooltipRow key={s.key} entry={s} value={map.get(s.key)} />
+      ))}
+      {mode === 'tokens' && credits > 0 && <CreditTooltipRow credits={credits} />}
     </div>
   )
 }
@@ -120,11 +145,14 @@ function TooltipRow({
   entry,
   value,
 }: {
-  entry: (typeof SERIES)[number]
+  entry: { key: string; name: string; color: string; kind: string }
   value?: number
 }) {
   if (value == null) return null
-  const valueStr = entry.kind === 'percent' ? `${value.toFixed(1)}%` : formatNumber(value)
+  let valueStr = formatNumber(value)
+  if (entry.kind === 'percent') valueStr = `${value.toFixed(1)}%`
+  if (entry.kind === 'credits') valueStr = formatCredits(value)
+
   return (
     <div style={TOOLTIP_ROW_STYLE}>
       <span style={{ ...TOOLTIP_SWATCH_BASE_STYLE, background: entry.color }} />
@@ -151,7 +179,7 @@ const CREDIT_ROW_STYLE: React.CSSProperties = {
   padding: '4px 0 0',
 }
 
-function TimeSeriesChartImpl({ data, granularity }: Props) {
+function TimeSeriesChartImpl({ data, granularity, mode = 'tokens' }: Props) {
   const formatted = useMemo<ChartPoint[]>(
     () =>
       data.map((p) => ({
@@ -162,97 +190,82 @@ function TimeSeriesChartImpl({ data, granularity }: Props) {
     [data, granularity],
   )
   const interval = useMemo(() => pickXAxisInterval(formatted.length), [formatted.length])
-  // 全零时强制让左轴显示 0 刻度，避免空白
-  const leftAllZero = useMemo(
-    () =>
-      formatted.every(
-        (p) =>
-          p.inputTokens === 0 &&
-          p.outputTokens === 0 &&
-          p.cacheCreationTokens === 0 &&
-          p.cacheReadTokens === 0,
-      ),
-    [formatted],
-  )
+
+  const leftAllZero = useMemo(() => {
+    if (mode === 'calls') {
+      return formatted.every((p) => p.calls === 0 && p.errors === 0)
+    }
+    if (mode === 'credits') {
+      return formatted.every((p) => (p.credits ?? 0) === 0)
+    }
+    return formatted.every(
+      (p) =>
+        p.inputTokens === 0 &&
+        p.outputTokens === 0 &&
+        p.cacheCreationTokens === 0 &&
+        p.cacheReadTokens === 0,
+    )
+  }, [formatted, mode])
+
+  const currentSeries = mode === 'calls' ? CALLS_SERIES : mode === 'credits' ? CREDITS_SERIES : TOKEN_SERIES
 
   return (
-    <div className="h-[260px] sm:h-[320px]">
+    <div className="h-[280px] sm:h-[320px]">
       <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={formatted} margin={{ top: 16, right: 6, left: -12, bottom: 0 }}>
-          {chartAxes({ interval, leftAllZero })}
-          <Tooltip content={<ChartTooltip />} cursor={tooltipCursorStyle} />
-          {chartLegend()}
-          {chartLines()}
+        <LineChart data={formatted} margin={{ top: 16, right: mode === 'tokens' ? 6 : 16, left: -12, bottom: 0 }}>
+          <CartesianGrid strokeDasharray="3 3" className="stroke-border/50" />
+          <XAxis
+            dataKey="label"
+            tick={{ fontSize: 11 }}
+            className="fill-muted-foreground"
+            interval={interval}
+          />
+          <YAxis
+            yAxisId="left"
+            tick={{ fontSize: 11 }}
+            className="fill-muted-foreground"
+            tickFormatter={(v: number) => (mode === 'credits' ? formatCredits(v) : formatNumber(v))}
+            width={mode === 'credits' ? 56 : 48}
+            domain={leftAllZero ? [0, 1] : [0, 'auto']}
+            ticks={leftAllZero ? [0] : undefined}
+            allowDecimals={mode === 'credits'}
+          />
+          {mode === 'tokens' && (
+            <YAxis
+              yAxisId="right"
+              orientation="right"
+              tick={{ fontSize: 11, fill: COLORS.cacheHitRate }}
+              domain={[0, 100]}
+              ticks={[0, 20, 40, 60, 80, 100]}
+              tickFormatter={(v: number) => `${v}%`}
+              width={36}
+            />
+          )}
+          <Tooltip content={<ChartTooltip mode={mode} />} cursor={tooltipCursorStyle} />
+          <Legend verticalAlign="top" align="center" iconType="circle" wrapperStyle={LEGEND_STYLE} />
+          {currentSeries.map((s) => (
+            <Line
+              key={s.key}
+              yAxisId={s.axis}
+              type="monotone"
+              dataKey={s.key}
+              stroke={s.color}
+              name={s.name}
+              dot={false}
+              strokeWidth={s.kind === 'percent' ? 1.8 : 2}
+              strokeDasharray={s.kind === 'percent' ? '4 4' : undefined}
+              isAnimationActive={false}
+            />
+          ))}
         </LineChart>
       </ResponsiveContainer>
     </div>
   )
 }
 
-function chartAxes({
-  interval,
-  leftAllZero,
-}: {
-  interval: number | 'preserveStartEnd'
-  leftAllZero: boolean
-}) {
-  return [
-    <CartesianGrid key="grid" strokeDasharray="3 3" className="stroke-border/50" />,
-    <XAxis
-      key="x"
-      dataKey="label"
-      tick={{ fontSize: 11 }}
-      className="fill-muted-foreground"
-      interval={interval}
-    />,
-    <YAxis
-      key="left"
-      yAxisId="left"
-      tick={{ fontSize: 11 }}
-      className="fill-muted-foreground"
-      tickFormatter={(v: number) => formatNumber(v)}
-      width={48}
-      domain={leftAllZero ? [0, 1] : [0, 'auto']}
-      ticks={leftAllZero ? [0] : undefined}
-      allowDecimals={false}
-    />,
-    <YAxis
-      key="right"
-      yAxisId="right"
-      orientation="right"
-      tick={{ fontSize: 11, fill: COLORS.cacheHitRate }}
-      domain={[0, 100]}
-      ticks={[0, 20, 40, 60, 80, 100]}
-      tickFormatter={(v: number) => `${v}%`}
-      width={36}
-    />,
-  ]
-}
-
-function chartLegend() {
-  return <Legend verticalAlign="top" align="center" iconType="circle" wrapperStyle={LEGEND_STYLE} />
-}
-
 const LEGEND_STYLE: React.CSSProperties = {
   fontSize: 12,
   paddingBottom: 8,
-}
-
-function chartLines() {
-  return SERIES.map((s) => (
-    <Line
-      key={s.key}
-      yAxisId={s.axis}
-      type="monotone"
-      dataKey={s.key}
-      stroke={s.color}
-      name={s.name}
-      dot={false}
-      strokeWidth={s.kind === 'percent' ? 1.8 : 2}
-      strokeDasharray={s.kind === 'percent' ? '4 4' : undefined}
-      isAnimationActive={false}
-    />
-  ))
 }
 
 export const TimeSeriesChart = memo(TimeSeriesChartImpl)

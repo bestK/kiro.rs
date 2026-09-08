@@ -129,11 +129,29 @@ function parseNestedErrorMessage(message: string): { title: string; detail?: str
  */
 export function formatNumber(value: number | null | undefined): string {
   if (value == null || Number.isNaN(value)) return '0'
-  if (Math.abs(value) < 1000) return String(value)
+  if (Math.abs(value) < 1000) {
+    if (!Number.isInteger(value)) {
+      return Number(value.toFixed(2)).toString()
+    }
+    return String(value)
+  }
   return new Intl.NumberFormat('en-US', {
     notation: 'compact',
     maximumFractionDigits: 1,
   }).format(value)
+}
+
+/**
+ * 凭据余额 / 额度数值格式化：
+ * 统一保留 2 位小数（四舍五入），规避 JavaScript 浮点数精度问题（如 123.79999999999995）。
+ * 示例：
+ *   formatBalance(123.79999999999995) => "123.80"
+ *   formatBalance(313.5) => "313.50"
+ *   formatBalance(0) => "0.00"
+ */
+export function formatBalance(value: number | null | undefined): string {
+  if (value == null || Number.isNaN(value)) return '0.00'
+  return Math.abs(value).toFixed(2)
 }
 
 /**

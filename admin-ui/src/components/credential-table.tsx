@@ -50,7 +50,7 @@ import type {
   CredentialSortField,
   SortDir,
 } from "@/types/api";
-import { maskProxyUrl, extractErrorMessage, formatNumber, cn } from "@/lib/utils";
+import { maskProxyUrl, extractErrorMessage, formatBalance, cn } from "@/lib/utils";
 import {
   useSetDisabled,
   useSetPriority,
@@ -806,8 +806,8 @@ function CredentialTableRowComponent({
                   }`}
                 >
                   {balance.remaining < 0
-                    ? `-$${formatNumber(Math.abs(balance.remaining))}`
-                    : `$${formatNumber(balance.remaining)}`}
+                    ? `-$${formatBalance(balance.remaining)}`
+                    : `$${formatBalance(balance.remaining)}`}
                 </span>
                 <span className="text-[10px] text-muted-foreground">
                   {balance.usagePercentage.toFixed(0)}%

@@ -255,7 +255,7 @@ export function ProfitCalculator({ currentCreditPrice }: ProfitCalculatorProps) 
             <Input
               value={baseUrl}
               onChange={(e) => setBaseUrl(e.target.value)}
-              placeholder="https://airouter.linkof.link"
+              placeholder="https://your-domain.com"
               className="h-8 text-xs font-mono"
             />
           </div>
@@ -272,7 +272,7 @@ export function ProfitCalculator({ currentCreditPrice }: ProfitCalculatorProps) 
                 type={showKey ? 'text' : 'password'}
                 value={adminKey}
                 onChange={(e) => setAdminKey(e.target.value)}
-                placeholder="rMlDNQoCdwWONBEQh5gV42zAFgubow=="
+                placeholder="sk-..."
                 className="h-8 text-xs font-mono pr-8"
               />
               <button

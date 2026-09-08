@@ -3,7 +3,7 @@
 
 @layer base {
   :root {
-    /* sub2api console light theme — Slate 50 backdrop with crisp white surfaces & Teal 600 */
+    /* Kiro console light theme — Slate 50 backdrop with crisp white surfaces & Teal 600 */
     --background: 210 40% 98%;
     --foreground: 222 47% 11%;
     --card: 0 0% 100%;
@@ -13,7 +13,7 @@
     --sidebar-border: 214 32% 91%;
     --popover: 0 0% 100%;
     --popover-foreground: 222 47% 11%;
-    /* sub2api signature Teal 600 (#0d9488) */
+    /* Signature Teal 600 (#0d9488) */
     --primary: 175 84% 32%;
     --primary-foreground: 0 0% 100%;
     --secondary: 210 40% 95%;
@@ -38,7 +38,7 @@
   }
 
   .dark {
-    /* sub2api console dark theme — Slate 950 (#020617) Void with Slate 900 Surface & Teal 500 (#14b8a6) */
+    /* Kiro console dark theme — Slate 950 (#020617) Void with Slate 900 Surface & Teal 500 (#14b8a6) */
     --background: 222 84% 4.5%;
     --foreground: 210 40% 98%;
     --card: 222 47% 9.5%;
@@ -48,7 +48,7 @@
     --sidebar-border: 217 33% 16%;
     --popover: 222 47% 9.5%;
     --popover-foreground: 210 40% 98%;
-    /* sub2api signature Teal 500 (#14b8a6) */
+    /* Signature Teal 500 (#14b8a6) */
     --primary: 173 80% 40%;
     --primary-foreground: 222 84% 4.5%;
     --secondary: 217 33% 14%;

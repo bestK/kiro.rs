@@ -301,6 +301,34 @@ async fn main() {
         });
     }
 
+    // 模型定价管理器与全局按积分返回 Token 运行时共享状态
+    let token_by_credit_state = std::sync::Arc::new(parking_lot::RwLock::new(
+        model::pricing::TokenByCreditState {
+            enabled: config.token_by_credit_enabled,
+            credit_price: config.token_by_credit_price,
+            models_dev_url: config.models_dev_url.clone(),
+            pricing_refresh_hours: config.pricing_refresh_hours,
+            simulated_cache_enabled: config.simulated_cache_enabled,
+            simulated_cache_ratio: config.simulated_cache_ratio,
+        },
+    ));
+
+    // 模型定价管理器（从 models.dev 拉取，用于按积分倒推返回给下游的 Token 数）
+    let pricing_manager = std::sync::Arc::new(
+        model::pricing::ModelPricingManager::new(
+            Some(&cache_dir),
+            Some(config.models_dev_url.clone()),
+        ),
+    );
+    pricing_manager.clone().spawn_refresher(config.pricing_refresh_hours);
+    if config.token_by_credit_enabled {
+        tracing::info!(
+            "按积分返回 Token 功能已开启（全局 1 积分 = {} USD，定价源: {}）",
+            config.token_by_credit_price,
+            config.models_dev_url
+        );
+    }
+
     let anthropic_app = anthropic::create_router_with_shared_provider(
         Some(kiro_provider.clone()),
         config.extract_thinking,
@@ -310,6 +338,9 @@ async fn main() {
         Some(usage_aggregator.clone()),
         Some(cache_meter.clone()),
         trace_store.clone(),
+        Some(pricing_manager.clone()),
+        Some(group_manager.clone()),
+        Some(token_by_credit_state.clone()),
     );
 
     // 构建 Admin API 路由（配置了非空 adminApiKey 时启用）
@@ -332,7 +363,11 @@ async fn main() {
                         Some(admin_trace_store.clone()),
                         Some(usage_recorder.clone()),
                     )
-                    .with_cache_meter(cache_meter.clone());
+                    .with_cache_meter(cache_meter.clone())
+                    .with_token_by_credit(
+                        Some(token_by_credit_state.clone()),
+                        Some(pricing_manager.clone()),
+                    );
             let admin_state = admin::AdminState::new(
                 admin_key,
                 admin_service,

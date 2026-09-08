@@ -6,9 +6,9 @@ import {
   MoreHorizontal,
   ShieldAlert,
   ShieldCheck,
-  Boxes,
   HeartPulse,
   HeartCrack,
+  FlaskConical,
 } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
@@ -234,8 +234,15 @@ function FullTools({
           <span className="hidden md:inline">{t.label}</span>
         </Button>
       ))}
-      <Button variant="ghost" size="icon" onClick={onOpenModels} title="可用模型">
-        <Boxes className="h-4 w-4" />
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={onOpenModels}
+        title="可用模型与连通性测试"
+        className="gap-1.5 px-2.5 text-xs font-normal"
+      >
+        <FlaskConical className="h-3.5 w-3.5 text-primary" />
+        <span>模型测试</span>
       </Button>
       <Button variant="ghost" size="icon" onClick={onRefresh} title="刷新数据">
         <RefreshCw className="h-4 w-4" />
@@ -291,8 +298,8 @@ function CompactTools({
           刷新数据
         </DropdownMenuItem>
         <DropdownMenuItem onSelect={onOpenModels}>
-          <Boxes />
-          可用模型
+          <FlaskConical className="h-4 w-4 text-primary" />
+          模型测试 / 可用模型
         </DropdownMenuItem>
         <DropdownMenuItem onSelect={onOpenImageUpdate}>
           <UploadCloud />

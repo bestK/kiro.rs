@@ -18,6 +18,7 @@ import {
   Globe,
   PackageOpen,
   ShieldCheck,
+  Coins,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { TopbarTools } from "@/components/topbar-tools";
@@ -90,8 +91,9 @@ export const TABS: readonly TabItem[] = [
     icon: SlidersHorizontal,
     children: [
       { key: "dispatch", label: "调度策略", icon: Gauge },
-      { key: "metadata", label: "凭据字段", icon: Tags },
+      { key: "billing", label: "计费折算", icon: Coins },
       { key: "models", label: "模型配置", icon: Cpu },
+      { key: "metadata", label: "凭据字段", icon: Tags },
       { key: "network", label: "网络代理", icon: Globe },
       { key: "log", label: "日志治理", icon: ScrollText },
       { key: "system", label: "系统更新", icon: PackageOpen },

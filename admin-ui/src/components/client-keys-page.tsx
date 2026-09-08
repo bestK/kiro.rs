@@ -25,6 +25,7 @@ import { useConfirm } from '@/components/ui/confirm-dialog'
 import { ConsoleTable, type ConsoleColumn } from '@/components/console/data-table'
 import { BulkBar } from '@/components/console/bulk-bar'
 import { PageHeader } from '@/components/console/page-header'
+import { CreditPriceInput } from '@/components/credit-price-input'
 
 function formatTokens(n: number): string {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(2) + 'M'
@@ -93,6 +94,8 @@ export function ClientKeysPage() {
   const [createDesc, setCreateDesc] = useState('')
   const [createGroup, setCreateGroup] = useState('')
   const [createMaxCredits, setCreateMaxCredits] = useState('')
+  const [createCreditMode, setCreateCreditMode] = useState<'inherit' | 'enabled' | 'disabled'>('inherit')
+  const [createCreditPrice, setCreateCreditPrice] = useState('')
   const [createdKey, setCreatedKey] = useState<CreateClientKeyResponse | null>(null)
   const [showCreatedPlain, setShowCreatedPlain] = useState(true)
 
@@ -102,6 +105,8 @@ export function ClientKeysPage() {
   const [editDesc, setEditDesc] = useState('')
   const [editGroup, setEditGroup] = useState('')
   const [editMaxCredits, setEditMaxCredits] = useState('')
+  const [editCreditMode, setEditCreditMode] = useState<'inherit' | 'enabled' | 'disabled'>('inherit')
+  const [editCreditPrice, setEditCreditPrice] = useState('')
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -115,12 +120,20 @@ export function ClientKeysPage() {
       toast.error('积分上限必须是非负数')
       return
     }
+    const priceNum = createCreditPrice.trim() !== '' ? Number(createCreditPrice.trim()) : undefined
+    if (createCreditPrice.trim() !== '' && (!Number.isFinite(priceNum) || (priceNum as number) < 0)) {
+      toast.error('每积分单价必须是非负数')
+      return
+    }
     try {
       const res = await createKey.mutateAsync({
         name,
         description: createDesc.trim() || undefined,
         group: createGroup.trim() || undefined,
         maxCredits: maxCredits ?? undefined,
+        tokenByCreditEnabled:
+          createCreditMode === 'enabled' ? true : createCreditMode === 'disabled' ? false : undefined,
+        creditPrice: Number.isFinite(priceNum) ? priceNum : undefined,
       })
       setCreatedKey(res)
       setCreateOpen(false)
@@ -128,6 +141,8 @@ export function ClientKeysPage() {
       setCreateDesc('')
       setCreateGroup('')
       setCreateMaxCredits('')
+      setCreateCreditMode('inherit')
+      setCreateCreditPrice('')
       setShowCreatedPlain(true)
     } catch (err) {
       toast.error('创建失败：' + extractErrorMessage(err))
@@ -210,6 +225,10 @@ export function ClientKeysPage() {
     setEditDesc(item.description ?? '')
     setEditGroup(item.group ?? '')
     setEditMaxCredits(item.maxCredits != null ? String(item.maxCredits) : '')
+    setEditCreditMode(
+      item.tokenByCreditEnabled === true ? 'enabled' : item.tokenByCreditEnabled === false ? 'disabled' : 'inherit'
+    )
+    setEditCreditPrice(item.creditPrice != null ? String(item.creditPrice) : '')
     setEditOpen(true)
   }
 
@@ -221,10 +240,24 @@ export function ClientKeysPage() {
       toast.error('积分上限必须是非负数')
       return
     }
+    const priceNum = editCreditPrice.trim() !== '' ? Number(editCreditPrice.trim()) : undefined
+    if (editCreditPrice.trim() !== '' && (!Number.isFinite(priceNum) || (priceNum as number) < 0)) {
+      toast.error('每积分单价必须是非负数')
+      return
+    }
     try {
       await updateKey.mutateAsync({
         id: editTarget.id,
-        req: { name: editName.trim(), description: editDesc.trim(), group: editGroup.trim() },
+        req: {
+          name: editName.trim(),
+          description: editDesc.trim(),
+          group: editGroup.trim(),
+          tokenByCreditEnabled:
+            editCreditMode === 'enabled' ? true : editCreditMode === 'disabled' ? false : undefined,
+          resetTokenByCredit: editCreditMode === 'inherit' ? true : undefined,
+          creditPrice: Number.isFinite(priceNum) ? priceNum : undefined,
+          resetCreditPrice: editCreditPrice.trim() === '' ? true : undefined,
+        },
       })
       // 仅在上限发生变化时才调用额度接口，避免无谓写入
       const prev = editTarget.maxCredits ?? null
@@ -400,6 +433,32 @@ export function ClientKeysPage() {
           ) : (
             <Badge variant="success">启用</Badge>
           ),
+      },
+      {
+        id: 'tokenByCredit',
+        header: '计费折算',
+        cell: (k) => {
+          if (k.tokenByCreditEnabled === true) {
+            const kPrice = k.creditPrice != null ? +(k.creditPrice * 1000).toFixed(4) : null
+            return (
+              <Badge
+                variant="outline"
+                className="border-emerald-500/40 text-emerald-600 bg-emerald-500/10 font-normal"
+                title={
+                  k.creditPrice != null
+                    ? `专属单价：$${kPrice}/千分 (折合 $${k.creditPrice}/积分)`
+                    : '继承分组或全局单价'
+                }
+              >
+                按积分 {kPrice != null ? `($${kPrice}/千分)` : ''}
+              </Badge>
+            )
+          }
+          if (k.tokenByCreditEnabled === false) {
+            return <Badge variant="secondary" className="text-muted-foreground font-normal">真实用量</Badge>
+          }
+          return <span className="text-[12px] text-muted-foreground">继承</span>
+        },
       },
       {
         id: 'totalCalls',
@@ -651,6 +710,53 @@ export function ClientKeysPage() {
                   累计使用的 credit 达到上限后，该 Key 的请求会被拒绝（HTTP 429）。重置统计后重新计费。
                 </p>
               </div>
+              <div className="space-y-1.5 pt-1">
+                <label className="text-[12px] text-muted-foreground">计费折算模式</label>
+                <div className="grid grid-cols-3 gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={createCreditMode === 'inherit' ? 'default' : 'outline'}
+                    className="text-xs"
+                    onClick={() => setCreateCreditMode('inherit')}
+                  >
+                    继承
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={createCreditMode === 'enabled' ? 'default' : 'outline'}
+                    className="text-xs"
+                    onClick={() => setCreateCreditMode('enabled')}
+                  >
+                    按积分折算
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={createCreditMode === 'disabled' ? 'default' : 'outline'}
+                    className="text-xs"
+                    onClick={() => setCreateCreditMode('disabled')}
+                  >
+                    真实用量
+                  </Button>
+                </div>
+                <p className="text-[11px] text-muted-foreground">
+                  {createCreditMode === 'inherit' && '继承所绑定分组或全局设置。'}
+                  {createCreditMode === 'enabled' && '对该 Key 强制按积分价值折算 Token 返回给下游平台。'}
+                  {createCreditMode === 'disabled' && '对该 Key 如实返回上游产生的真实 Token 数量。'}
+                </p>
+              </div>
+              {createCreditMode === 'enabled' && (
+                <div className="space-y-1.5">
+                  <label className="text-[12px] text-muted-foreground">专属计费单价</label>
+                  <CreditPriceInput
+                    value={createCreditPrice}
+                    onChange={setCreateCreditPrice}
+                    disabled={createKey.isPending}
+                  />
+                </div>
+              )}
               <DialogFooter>
                 <Button type="button" variant="outline" onClick={() => setCreateOpen(false)} disabled={createKey.isPending}>
                   取消
@@ -765,6 +871,53 @@ export function ClientKeysPage() {
                   累计 credit 达到上限后该 Key 请求会被拒绝（HTTP 429）。清空则取消限制；重置统计可清零已用量。
                 </p>
               </div>
+              <div className="space-y-1.5 pt-1">
+                <label className="text-[12px] text-muted-foreground">计费折算模式</label>
+                <div className="grid grid-cols-3 gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={editCreditMode === 'inherit' ? 'default' : 'outline'}
+                    className="text-xs"
+                    onClick={() => setEditCreditMode('inherit')}
+                  >
+                    继承
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={editCreditMode === 'enabled' ? 'default' : 'outline'}
+                    className="text-xs"
+                    onClick={() => setEditCreditMode('enabled')}
+                  >
+                    按积分折算
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={editCreditMode === 'disabled' ? 'default' : 'outline'}
+                    className="text-xs"
+                    onClick={() => setEditCreditMode('disabled')}
+                  >
+                    真实用量
+                  </Button>
+                </div>
+                <p className="text-[11px] text-muted-foreground">
+                  {editCreditMode === 'inherit' && '继承所绑定分组或全局设置。'}
+                  {editCreditMode === 'enabled' && '对该 Key 强制按积分价值折算 Token 返回给下游平台。'}
+                  {editCreditMode === 'disabled' && '对该 Key 如实返回上游产生的真实 Token 数量。'}
+                </p>
+              </div>
+              {editCreditMode === 'enabled' && (
+                <div className="space-y-1.5">
+                  <label className="text-[12px] text-muted-foreground">专属计费单价</label>
+                  <CreditPriceInput
+                    value={editCreditPrice}
+                    onChange={setEditCreditPrice}
+                    disabled={updateKey.isPending}
+                  />
+                </div>
+              )}
               <DialogFooter>
                 <Button type="button" variant="outline" onClick={() => setEditOpen(false)}>取消</Button>
                 <Button type="submit" disabled={updateKey.isPending || setMaxCredits.isPending}>

@@ -38,6 +38,13 @@ import type {
   GitHubRateLimitInfo,
   UpdateAdminKeyRequest,
   CredentialMetadataSchemaConfig,
+  TokenByCreditConfigResponse,
+  SetTokenByCreditConfigRequest,
+  VerifyBillingRequest,
+  VerifyBillingResponse,
+  VerifyBillingHistoryItem,
+  FetchModelsRequest,
+  FetchModelsResponse,
 } from '@/types/api'
 
 // 创建 axios 实例
@@ -577,6 +584,51 @@ export async function setCacheMeteringConfig(
   patch: Partial<CacheMeteringConfig>,
 ): Promise<CacheMeteringConfig> {
   const { data } = await api.put<CacheMeteringConfig>('/config/cache-metering', patch)
+  return data
+}
+
+// 获取全局按积分返回 Token 配置
+export async function getTokenByCreditConfig(): Promise<TokenByCreditConfigResponse> {
+  const { data } = await api.get<TokenByCreditConfigResponse>('/config/token-by-credit')
+  return data
+}
+
+// 更新全局按积分返回 Token 配置
+export async function setTokenByCreditConfig(
+  patch: SetTokenByCreditConfigRequest,
+): Promise<TokenByCreditConfigResponse> {
+  const { data } = await api.put<TokenByCreditConfigResponse>('/config/token-by-credit', patch)
+  return data
+}
+
+// 发起下游计费验证请求
+export async function verifyDownstreamBilling(
+  req: VerifyBillingRequest
+): Promise<VerifyBillingResponse> {
+  const { data } = await api.post<VerifyBillingResponse>('/config/token-by-credit/verify', req, {
+    timeout: 35000,
+  })
+  return data
+}
+
+// 获取计费验证历史记录
+export async function getBillingVerifications(): Promise<VerifyBillingHistoryItem[]> {
+  const { data } = await api.get<VerifyBillingHistoryItem[]>('/config/token-by-credit/verifications')
+  return data
+}
+
+// 清空计费验证历史记录
+export async function clearBillingVerifications(): Promise<void> {
+  await api.delete('/config/token-by-credit/verifications')
+}
+
+// 拉取 /v1/models 模型列表（支持指定下游地址与密钥，为空则拉取本地）
+export async function fetchTokenByCreditModels(
+  req: FetchModelsRequest
+): Promise<FetchModelsResponse> {
+  const { data } = await api.post<FetchModelsResponse>('/config/token-by-credit/models', req, {
+    timeout: 15000,
+  })
   return data
 }
 

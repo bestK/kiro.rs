@@ -68,6 +68,9 @@ pub fn create_router(
         usage_aggregator,
         cache_meter,
         trace_store,
+        None,
+        None,
+        None,
     )
 }
 
@@ -82,6 +85,9 @@ pub fn create_router_with_shared_provider(
     usage_aggregator: Option<SharedAggregator>,
     cache_meter: Option<SharedCacheMeter>,
     trace_store: Option<SharedTraceStore>,
+    pricing_manager: Option<crate::model::pricing::SharedPricingManager>,
+    group_manager: Option<crate::admin::groups::SharedGroupManager>,
+    token_by_credit: Option<crate::model::pricing::SharedTokenByCredit>,
 ) -> Router {
     let mut state = AppState::new(extract_thinking, tool_compatibility_mode);
     if let Some(provider) = kiro_provider {
@@ -90,6 +96,11 @@ pub fn create_router_with_shared_provider(
     state = state.with_usage(client_keys, usage_recorder, usage_aggregator);
     state = state.with_cache_meter(cache_meter);
     state = state.with_trace_store(trace_store);
+    state = state.with_pricing(
+        pricing_manager,
+        token_by_credit,
+        group_manager,
+    );
 
     // 需要认证的 /v1 路由
     let v1_routes = Router::new()

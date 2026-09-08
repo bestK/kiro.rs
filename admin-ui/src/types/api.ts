@@ -463,6 +463,8 @@ export interface ClientKeyItem {
   group?: string
   /** 是否系统密钥（由 config.json apiKey 同步，不可删除、可轮换） */
   isSystem: boolean
+  tokenByCreditEnabled?: boolean | null
+  creditPrice?: number | null
 }
 
 export interface ClientKeysResponse {
@@ -476,6 +478,8 @@ export interface CreateClientKeyRequest {
   group?: string
   /** 积分使用上限（可选，不传表示不限制） */
   maxCredits?: number
+  tokenByCreditEnabled?: boolean
+  creditPrice?: number
 }
 
 /** 创建响应：明文 Key 仅在此处返回一次 */
@@ -490,6 +494,10 @@ export interface UpdateClientKeyRequest {
   name?: string
   description?: string
   group?: string
+  tokenByCreditEnabled?: boolean
+  resetTokenByCredit?: boolean
+  creditPrice?: number
+  resetCreditPrice?: boolean
 }
 
 // ============ 用量统计 ============
@@ -700,6 +708,8 @@ export interface GroupItem {
   credentialCount: number
   /** 引用计数：有多少把客户端 Key 绑定这个分组 */
   clientKeyCount: number
+  tokenByCreditEnabled?: boolean | null
+  creditPrice?: number | null
 }
 
 export interface GroupsResponse {
@@ -710,6 +720,8 @@ export interface GroupsResponse {
 export interface CreateGroupRequest {
   name: string
   description?: string
+  tokenByCreditEnabled?: boolean
+  creditPrice?: number
 }
 
 export interface UpdateGroupRequest {
@@ -717,4 +729,83 @@ export interface UpdateGroupRequest {
   newName?: string
   /** 新备注；空字符串清除；undefined 保留原值 */
   description?: string
+  tokenByCreditEnabled?: boolean
+  resetTokenByCredit?: boolean
+  creditPrice?: number
+  resetCreditPrice?: boolean
+}
+
+// ============ 按积分返回 Token 全局配置 ============
+
+export interface TokenByCreditConfigResponse {
+  enabled: boolean
+  creditPrice: number
+  modelsDevUrl: string
+  pricingRefreshHours: number
+  simulatedCacheEnabled: boolean
+  simulatedCacheRatio: number
+}
+
+export interface SetTokenByCreditConfigRequest {
+  enabled?: boolean
+  creditPrice?: number
+  modelsDevUrl?: string
+  pricingRefreshHours?: number
+  simulatedCacheEnabled?: boolean
+  simulatedCacheRatio?: number
+}
+
+export interface VerifyBillingRequest {
+  baseUrl: string
+  apiKey: string
+  model?: string
+  prompt?: string
+  creditPrice?: number
+}
+
+export interface VerifyBillingResponse {
+  success: boolean
+  status: number
+  durationMs: number
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens: number
+  cacheCreationTokens: number
+  model: string
+  modelInputPrice: number
+  modelOutputPrice: number
+  calculatedCostUsd: number
+  estimatedCredits: number
+  estimatedQuota: number
+  error?: string
+  rawResponse?: string
+}
+
+export interface VerifyBillingHistoryItem {
+  id: string
+  createdAt: string
+  baseUrl: string
+  model: string
+  durationMs: number
+  success: boolean
+  status: number
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens: number
+  calculatedCostUsd: number
+  estimatedCredits: number
+  estimatedQuota: number
+  error?: string
+}
+
+export interface FetchModelsRequest {
+  baseUrl?: string
+  apiKey?: string
+}
+
+export interface FetchModelsResponse {
+  success: boolean
+  source: 'downstream' | 'local'
+  models: string[]
+  error?: string
 }

@@ -1,9 +1,24 @@
 import { useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
-import { Cpu, Bot, Sparkles, Wrench, Plus, Trash2, Save, Loader2, AlertCircle } from 'lucide-react'
+import {
+  Cpu,
+  Bot,
+  Sparkles,
+  Wrench,
+  Plus,
+  Trash2,
+  Save,
+  Loader2,
+  AlertCircle,
+  ArrowRightLeft,
+  Coins,
+  Boxes,
+  ArrowRight,
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
+import { Badge } from '@/components/ui/badge'
 import {
   SettingGroup,
   SettingSwitch,
@@ -108,6 +123,7 @@ export function ModelsSection() {
   const affinityHitPct =
     affinityTotal > 0 ? ((affinity!.hits / affinityTotal) * 100).toFixed(1) : null
 
+
   // 上游模型
   const upstreamQuery = useCurrentCredentialModels(vendor !== 'custom')
 
@@ -209,6 +225,12 @@ export function ModelsSection() {
       <SettingGroup
         title="Prompt Cache 提示词缓存"
         description="控制向客户端返回的用量中是否包含 Anthropic 格式的缓存计量"
+        icon={<Cpu className="h-4 w-4" />}
+        badge={
+          <Badge variant={cacheMeteringEnabled ? 'default' : 'secondary'} className="text-[11px]">
+            {cacheMeteringEnabled ? '模拟计量生效中' : '全额计入 Input'}
+          </Badge>
+        }
       >
         <SettingSwitch
           label="模拟 prompt cache 计量"
@@ -228,6 +250,16 @@ export function ModelsSection() {
       <SettingGroup
         title="会话粘性路由"
         description="开启后同一会话的后续轮次优先沿用上一轮成功的账号；该账号不可用时才回落到负载均衡。上游 prompt cache 按 profile 隔离：账号同属一个 profile 时换号不丢缓存（凭据页顶部有标记），跨 profile 部署时粘性才真正保住缓存。"
+        icon={<ArrowRightLeft className="h-4 w-4" />}
+        badge={
+          <Badge variant={affinityEnabled ? 'default' : 'secondary'} className="text-[11px]">
+            {affinityEnabled
+              ? affinityHitPct != null
+                ? `命中率 ${affinityHitPct}%`
+                : '粘性生效中'
+              : '已关闭'}
+          </Badge>
+        }
       >
         <SettingSwitch
           label="同一会话优先沿用上一轮账号"
@@ -235,7 +267,7 @@ export function ModelsSection() {
             affinityEnabled
               ? affinityHitPct != null
                 ? `运行以来粘性命中率 ${affinityHitPct}%（命中 ${affinity!.hits} / 未命中 ${affinity!.misses}），当前有效绑定 ${affinity!.activeBindings} 个会话。请求日志里可按「仅换号」筛出未沿用的轮次。`
-                : '尚无统计。粘性优先于 priority 模式的「高优先级恢复后立即回切」；会话在有效期内不会主动迁回高优先级账号。'
+                : '尚无统计。粘性优先于 priority模式的「高优先级恢复后立即回切」；会话在有效期内不会主动迁回高优先级账号。'
               : '每轮独立按负载均衡选号；多账号下同一会话大概率在账号间跳转，上游缓存难以复用。'
           }
           checked={affinityEnabled}
@@ -263,9 +295,44 @@ export function ModelsSection() {
         )}
       </SettingGroup>
 
+      {/* 积分计费跳转提示横幅 */}
+      <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="flex items-start sm:items-center gap-3">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/20">
+            <Coins className="h-5 w-5" />
+          </div>
+          <div>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-sm font-semibold text-foreground">积分计费与用量折算 (Token by Credit)</span>
+              <Badge variant="outline" className="border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400 text-[11px]">
+                独立专区
+              </Badge>
+            </div>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              为方便精细化对齐下游 New API / One API 扣费，用量折算、单价倍率与分级规则已移至独立专区。
+            </p>
+          </div>
+        </div>
+        <Button
+          size="sm"
+          variant="outline"
+          className="border-amber-500/30 hover:bg-amber-500/10 text-amber-700 dark:text-amber-300 shrink-0 gap-1.5"
+          onClick={() => { window.location.hash = '#settings?s=billing' }}
+        >
+          前往计费折算
+          <ArrowRight className="h-3.5 w-3.5" />
+        </Button>
+      </div>
+
       <SettingGroup
         title="可用模型"
         description="按厂商查看上游可用模型，或自定义模型别名与元数据。"
+        icon={<Boxes className="h-4 w-4" />}
+        badge={
+          <Badge variant="secondary" className="text-[11px] font-mono">
+            {vendor === 'custom' ? `自定义 (${customCount})` : `${vendor} (${upstreamModels.length})`}
+          </Badge>
+        }
       >
         {/* 厂商 Tab */}
         <nav className="mb-3 flex flex-wrap gap-0.5" aria-label="模型厂商">

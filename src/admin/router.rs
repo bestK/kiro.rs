@@ -19,6 +19,9 @@ use super::{
         get_credential_balance, get_credential_metadata_schema, get_credential_models,
         get_current_models, get_global_proxy, get_custom_models,
         get_cache_metering_config, get_session_affinity_config,
+        get_token_by_credit_config, set_token_by_credit_config,
+        verify_downstream_billing, get_billing_verifications, clear_billing_verifications,
+        fetch_token_by_credit_models,
         get_load_balancing_mode, get_log_governance_config, get_proxy_pool, get_self_heal_config,
         get_update_config, list_client_keys, list_groups, list_traces, poll_idc_login,
         poll_idc_relogin, poll_social_login, poll_social_relogin, pull_update_image,
@@ -133,6 +136,22 @@ pub fn create_admin_router(state: AdminState) -> Router {
         .route(
             "/config/session-affinity",
             get(get_session_affinity_config).put(set_session_affinity_config),
+        )
+        .route(
+            "/config/token-by-credit",
+            get(get_token_by_credit_config).put(set_token_by_credit_config),
+        )
+        .route(
+            "/config/token-by-credit/verify",
+            post(verify_downstream_billing),
+        )
+        .route(
+            "/config/token-by-credit/models",
+            post(fetch_token_by_credit_models),
+        )
+        .route(
+            "/config/token-by-credit/verifications",
+            get(get_billing_verifications).delete(clear_billing_verifications),
         )
         .route(
             "/config/credential-metadata-schema",

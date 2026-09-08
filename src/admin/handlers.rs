@@ -27,12 +27,15 @@ use super::{
         SetAccountRpmLimitConfigRequest, SetAccountThrottleConfigRequest, SetDisabledRequest,
         SetGlobalProxyRequest,
         SetCacheMeteringConfigRequest, SetSessionAffinityConfigRequest,
+        SetTokenByCreditConfigRequest,
         SetLoadBalancingModeRequest, SetLogGovernanceConfigRequest, SetPriorityRequest,
         SetSelfHealConfigRequest,
         SetUpdateConfigRequest, StartIdcLoginRequest, StartSocialLoginRequest, SuccessResponse,
         UpdateAdminKeyRequest, UpdateClientKeyRequest, UpdateCredentialRequest,
         UpdateRefreshTokenRequest,
         SetCustomModelsRequest,
+        VerifyBillingRequest,
+        FetchModelsRequest,
     },
     usage_stats::{Range, StatsGranularity, StatsQueryWindow},
 };
@@ -676,6 +679,61 @@ pub async fn set_session_affinity_config(
     }
 }
 
+/// GET /api/admin/config/token-by-credit
+/// 获取全局按积分返回 Token 配置
+pub async fn get_token_by_credit_config(State(state): State<AdminState>) -> impl IntoResponse {
+    Json(state.service.get_token_by_credit_config())
+}
+
+/// PUT /api/admin/config/token-by-credit
+/// 更新全局按积分返回 Token 配置
+pub async fn set_token_by_credit_config(
+    State(state): State<AdminState>,
+    Json(payload): Json<SetTokenByCreditConfigRequest>,
+) -> impl IntoResponse {
+    match state.service.set_token_by_credit_config(payload) {
+        Ok(response) => Json(response).into_response(),
+        Err(e) => (e.status_code(), Json(e.into_response())).into_response(),
+    }
+}
+
+/// POST /api/admin/config/token-by-credit/verify
+/// 发起下游价格验证请求
+pub async fn verify_downstream_billing(
+    State(state): State<AdminState>,
+    Json(payload): Json<VerifyBillingRequest>,
+) -> impl IntoResponse {
+    match state.service.verify_downstream_billing(payload).await {
+        Ok(response) => Json(response).into_response(),
+        Err(e) => (e.status_code(), Json(e.into_response())).into_response(),
+    }
+}
+
+/// GET /api/admin/config/token-by-credit/verifications
+/// 获取计费验证历史列表
+pub async fn get_billing_verifications(State(state): State<AdminState>) -> impl IntoResponse {
+    Json(state.service.get_billing_verifications())
+}
+
+/// DELETE /api/admin/config/token-by-credit/verifications
+/// 清空计费验证历史列表
+pub async fn clear_billing_verifications(State(state): State<AdminState>) -> impl IntoResponse {
+    state.service.clear_billing_verifications();
+    StatusCode::NO_CONTENT
+}
+
+/// POST /api/admin/config/token-by-credit/models
+/// 拉取 /v1/models 模型列表（支持指定下游地址，若为空则返回本地聚合模型列表）
+pub async fn fetch_token_by_credit_models(
+    State(state): State<AdminState>,
+    Json(payload): Json<FetchModelsRequest>,
+) -> impl IntoResponse {
+    match state.service.fetch_models(payload).await {
+        Ok(response) => Json(response).into_response(),
+        Err(e) => (e.status_code(), Json(e.into_response())).into_response(),
+    }
+}
+
 /// POST /api/admin/auth/idc/start
 /// 发起 IdC 设备授权登录
 pub async fn start_idc_login(
@@ -976,6 +1034,8 @@ fn key_to_item(k: &super::client_keys::ClientKey) -> ClientKeyItem {
         max_credits: k.max_credits,
         group: k.group.clone(),
         is_system: k.is_system,
+        token_by_credit_enabled: k.token_by_credit_enabled,
+        credit_price: k.credit_price,
     }
 }
 
@@ -1031,6 +1091,15 @@ pub async fn create_client_key(
     // 创建后若指定了上限则应用
     if let Some(v) = payload.max_credits {
         state.client_keys.set_max_credits(entry.id, Some(v));
+    }
+    if payload.token_by_credit_enabled.is_some() || payload.credit_price.is_some() {
+        state.client_keys.update_token_by_credit(
+            entry.id,
+            payload.token_by_credit_enabled,
+            false,
+            payload.credit_price,
+            false,
+        );
     }
     Json(CreateClientKeyResponse {
         id: entry.id,
@@ -1129,6 +1198,17 @@ pub async fn update_client_key(
         .client_keys
         .update_meta(id, payload.name, description, group)
     {
+        let reset_enabled = payload.reset_token_by_credit.unwrap_or(false);
+        let reset_price = payload.reset_credit_price.unwrap_or(false);
+        if payload.token_by_credit_enabled.is_some() || reset_enabled || payload.credit_price.is_some() || reset_price {
+            state.client_keys.update_token_by_credit(
+                id,
+                payload.token_by_credit_enabled,
+                reset_enabled,
+                payload.credit_price,
+                reset_price,
+            );
+        }
         Json(SuccessResponse::new(format!("Key #{} 已更新", id))).into_response()
     } else {
         (
@@ -1656,6 +1736,8 @@ fn group_to_item(g: &super::groups::Group, state: &AdminState) -> super::types::
             .token_manager()
             .count_credentials_with_group(&g.name),
         client_key_count: state.client_keys.count_with_group(&g.name),
+        token_by_credit_enabled: g.token_by_credit_enabled,
+        credit_price: g.credit_price,
     }
 }
 
@@ -1675,7 +1757,12 @@ pub async fn create_group(
     State(state): State<AdminState>,
     Json(payload): Json<super::types::CreateGroupRequest>,
 ) -> impl IntoResponse {
-    match state.groups.create(payload.name, payload.description) {
+    match state.groups.create_with_pricing(
+        payload.name,
+        payload.description,
+        payload.token_by_credit_enabled,
+        payload.credit_price,
+    ) {
         Ok(g) => Json(group_to_item(&g, &state)).into_response(),
         Err(e) => {
             let msg = e.to_string();
@@ -1766,6 +1853,27 @@ pub async fn update_group(
             Some(desc)
         };
         if let Err(e) = state.groups.update_description(&current_name, desc_opt) {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(super::types::AdminErrorResponse::invalid_request(
+                    e.to_string(),
+                )),
+            )
+                .into_response();
+        }
+    }
+
+    // 3. 改积分返回 Token 配置
+    let reset_enabled = payload.reset_token_by_credit.unwrap_or(false);
+    let reset_price = payload.reset_credit_price.unwrap_or(false);
+    if payload.token_by_credit_enabled.is_some() || reset_enabled || payload.credit_price.is_some() || reset_price {
+        if let Err(e) = state.groups.update_token_by_credit(
+            &current_name,
+            payload.token_by_credit_enabled,
+            reset_enabled,
+            payload.credit_price,
+            reset_price,
+        ) {
             return (
                 StatusCode::BAD_REQUEST,
                 Json(super::types::AdminErrorResponse::invalid_request(

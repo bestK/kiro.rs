@@ -618,6 +618,36 @@ pub struct SetCacheMeteringConfigRequest {
     pub enabled: Option<bool>,
 }
 
+/// 按积分返回 Token 全局配置响应。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TokenByCreditConfigResponse {
+    pub enabled: bool,
+    pub credit_price: f64,
+    pub models_dev_url: String,
+    pub pricing_refresh_hours: u64,
+    pub simulated_cache_enabled: bool,
+    pub simulated_cache_ratio: f64,
+}
+
+/// 按积分返回 Token 全局配置更新请求。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetTokenByCreditConfigRequest {
+    #[serde(default)]
+    pub enabled: Option<bool>,
+    #[serde(default)]
+    pub credit_price: Option<f64>,
+    #[serde(default)]
+    pub models_dev_url: Option<String>,
+    #[serde(default)]
+    pub pricing_refresh_hours: Option<u64>,
+    #[serde(default)]
+    pub simulated_cache_enabled: Option<bool>,
+    #[serde(default)]
+    pub simulated_cache_ratio: Option<f64>,
+}
+
 /// 会话粘性路由配置 + 运行时统计响应。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -944,6 +974,12 @@ pub struct ClientKeyItem {
     /// 是否系统密钥（由 config.json apiKey 同步，不可删除、可轮换）
     #[serde(default)]
     pub is_system: bool,
+    /// 是否开启按积分返回 Token（None 表示继承分组或全局配置）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub token_by_credit_enabled: Option<bool>,
+    /// 1 积分对应的金额（None 表示继承分组或全局配置）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub credit_price: Option<f64>,
 }
 
 /// 客户端 Key 列表响应
@@ -966,6 +1002,12 @@ pub struct CreateClientKeyRequest {
     /// 积分使用上限（可选；None / 省略表示不限制）
     #[serde(default)]
     pub max_credits: Option<f64>,
+    /// 是否开启按积分返回 Token（None 表示继承）
+    #[serde(default)]
+    pub token_by_credit_enabled: Option<bool>,
+    /// 1 积分对应的金额（None 表示继承）
+    #[serde(default)]
+    pub credit_price: Option<f64>,
 }
 
 /// 创建客户端 Key 响应（明文 Key 仅在此处返回一次）
@@ -986,6 +1028,18 @@ pub struct UpdateClientKeyRequest {
     pub description: Option<String>,
     #[serde(default)]
     pub group: Option<String>,
+    /// 是否开启按积分返回 Token
+    #[serde(default)]
+    pub token_by_credit_enabled: Option<bool>,
+    /// 是否重置按积分返回 Token 设置为继承
+    #[serde(default)]
+    pub reset_token_by_credit: Option<bool>,
+    /// 1 积分对应的金额
+    #[serde(default)]
+    pub credit_price: Option<f64>,
+    /// 是否重置金额设置为继承
+    #[serde(default)]
+    pub reset_credit_price: Option<bool>,
 }
 
 /// 设置客户端 Key 的积分使用上限
@@ -1249,6 +1303,12 @@ pub struct GroupItem {
     pub credential_count: usize,
     /// 引用计数：有多少把客户端 Key 绑定这个分组
     pub client_key_count: usize,
+    /// 是否开启按积分返回 Token（None 表示继承全局配置）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub token_by_credit_enabled: Option<bool>,
+    /// 该分组 1 积分对应的金额（None 表示继承全局配置）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub credit_price: Option<f64>,
 }
 
 /// 分组列表响应
@@ -1266,9 +1326,13 @@ pub struct CreateGroupRequest {
     pub name: String,
     #[serde(default)]
     pub description: Option<String>,
+    #[serde(default)]
+    pub token_by_credit_enabled: Option<bool>,
+    #[serde(default)]
+    pub credit_price: Option<f64>,
 }
 
-/// 更新分组请求（改名 / 改备注；两者都可选）
+/// 更新分组请求（改名 / 改备注 / 改积分返回配置）
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateGroupRequest {
@@ -1278,6 +1342,18 @@ pub struct UpdateGroupRequest {
     /// 新备注；传空字符串清除备注；不传字段则保留
     #[serde(default)]
     pub description: Option<String>,
+    /// 是否开启按积分返回 Token
+    #[serde(default)]
+    pub token_by_credit_enabled: Option<bool>,
+    /// 是否重置按积分返回 Token 设置为继承
+    #[serde(default)]
+    pub reset_token_by_credit: Option<bool>,
+    /// 该分组 1 积分对应的金额
+    #[serde(default)]
+    pub credit_price: Option<f64>,
+    /// 是否重置金额设置为继承
+    #[serde(default)]
+    pub reset_credit_price: Option<bool>,
 }
 
 /// 删除分组的可选查询参数
@@ -1328,4 +1404,89 @@ pub struct CustomModelItem {
 #[serde(rename_all = "camelCase")]
 pub struct SetCustomModelsRequest {
     pub models: Vec<CustomModelItem>,
+}
+
+/// 下游计费对齐验证请求
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VerifyBillingRequest {
+    pub base_url: String,
+    pub api_key: String,
+    #[serde(default = "default_verify_model")]
+    pub model: String,
+    #[serde(default = "default_verify_prompt")]
+    pub prompt: String,
+    /// 可选：自定义用于折算验证的单积分价格（USD/分），若未指定则使用系统当前配置
+    #[serde(default)]
+    pub credit_price: Option<f64>,
+}
+
+fn default_verify_model() -> String {
+    "claude-3-7-sonnet-20250219".to_string()
+}
+
+fn default_verify_prompt() -> String {
+    "请回复数字 1".to_string()
+}
+
+/// 下游计费对齐验证响应
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VerifyBillingResponse {
+    pub success: bool,
+    pub status: u16,
+    pub duration_ms: u64,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cache_read_tokens: u64,
+    pub cache_creation_tokens: u64,
+    pub model: String,
+    pub model_input_price: f64,
+    pub model_output_price: f64,
+    pub calculated_cost_usd: f64,
+    pub estimated_credits: f64,
+    pub estimated_quota: u64,
+    pub error: Option<String>,
+    pub raw_response: Option<String>,
+}
+
+/// 下游计费验证历史条目
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VerifyBillingHistoryItem {
+    pub id: String,
+    pub created_at: String,
+    pub base_url: String,
+    pub model: String,
+    pub duration_ms: u64,
+    pub success: bool,
+    pub status: u16,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cache_read_tokens: u64,
+    pub calculated_cost_usd: f64,
+    pub estimated_credits: f64,
+    pub estimated_quota: u64,
+    pub error: Option<String>,
+}
+
+/// 拉取 /v1/models 模型列表请求（支持指定下游地址与密钥，若为空则拉取本地）
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FetchModelsRequest {
+    #[serde(default)]
+    pub base_url: Option<String>,
+    #[serde(default)]
+    pub api_key: Option<String>,
+}
+
+/// 拉取 /v1/models 模型列表响应
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FetchModelsResponse {
+    pub success: bool,
+    pub source: String, // "downstream" | "local"
+    pub models: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }

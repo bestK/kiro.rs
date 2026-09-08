@@ -868,6 +868,8 @@ pub async fn post_messages(
             cache_usage,
             tracer,
             key_ctx.group.clone(),
+            key_ctx.token_by_credit,
+            state.pricing_manager.clone(),
         )
         .await
     } else {
@@ -896,6 +898,8 @@ pub async fn post_messages(
             cache_usage,
             tracer,
             key_ctx.group.clone(),
+            key_ctx.token_by_credit,
+            state.pricing_manager.clone(),
         )
         .await
     }
@@ -914,6 +918,8 @@ async fn handle_stream_request(
     cache_usage: super::cache_metering::CacheUsage,
     tracer: std::sync::Arc<RequestTracer>,
     group: Option<String>,
+    token_by_credit: super::middleware::TokenByCreditConfig,
+    pricing_manager: Option<crate::model::pricing::SharedPricingManager>,
 ) -> Response {
     // 调用 Kiro API（支持多凭据故障转移）
     let call_result = match provider
@@ -944,7 +950,8 @@ async fn handle_stream_request(
         thinking_enabled,
         tool_name_map,
         known_tool_names,
-    );
+    )
+    .with_token_by_credit(Some(token_by_credit), pricing_manager);
     ctx.cache_usage = cache_usage;
 
     // 生成初始事件
@@ -1189,10 +1196,10 @@ impl Drop for StreamSettlement {
 
 /// 从 StreamContext 提取用量，转成 trace 行用量（与 record_stream_usage 同源）
 fn stream_trace_usage(ctx: &StreamContext) -> TraceUsage {
-    let (input, cache_creation, cache_read) = ctx.resolved_usage();
+    let (input, output, cache_creation, cache_read) = ctx.resolved_adjusted_usage();
     TraceUsage {
         input_tokens: input.max(0) as u64,
-        output_tokens: ctx.resolved_output_tokens() as u64,
+        output_tokens: output.max(0) as u64,
         cache_creation_tokens: cache_creation.max(0) as u64,
         cache_read_tokens: cache_read.max(0) as u64,
         source: UsageSource::resolve(ctx.provider_token_usage.is_some(), &ctx.cache_usage),
@@ -1221,6 +1228,8 @@ async fn handle_non_stream_request(
     cache_usage: super::cache_metering::CacheUsage,
     tracer: std::sync::Arc<RequestTracer>,
     group: Option<String>,
+    token_by_credit: super::middleware::TokenByCreditConfig,
+    pricing_manager: Option<crate::model::pricing::SharedPricingManager>,
 ) -> Response {
     // 调用 Kiro API（支持多凭据故障转移）
     let call_result = match provider
@@ -1473,7 +1482,7 @@ async fn handle_non_stream_request(
 
     // provider 未下发 metadataEvent 时才使用本地输出估算。
     let fallback_output_tokens = token::estimate_output_tokens(&content);
-    let (final_input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens) =
+    let (mut final_input_tokens, mut output_tokens, mut cache_creation_tokens, mut cache_read_tokens) =
         resolve_non_stream_usage(
             input_tokens,
             context_input_tokens,
@@ -1481,6 +1490,27 @@ async fn handle_non_stream_request(
             cache_usage,
             provider_token_usage,
         );
+
+    // 若开启按积分返回 Token 且有消耗积分，依据 models.dev 定价倒推 Token
+    if token_by_credit.enabled && credits > 0.0 {
+        let cost = pricing_manager
+            .as_ref()
+            .map(|pm| pm.get_cost(model))
+            .unwrap_or_default();
+        let adj = crate::model::pricing::calculate_tokens_by_credit(
+            final_input_tokens.max(0) as u64,
+            output_tokens.max(0) as u64,
+            credits,
+            token_by_credit.credit_price,
+            &cost,
+            token_by_credit.simulated_cache_enabled,
+            token_by_credit.simulated_cache_ratio,
+        );
+        final_input_tokens = adj.input_tokens as i32;
+        output_tokens = adj.output_tokens as i32;
+        cache_creation_tokens = adj.cache_creation_tokens as i32;
+        cache_read_tokens = adj.cache_read_tokens as i32;
+    }
 
     // 构建 Anthropic 响应
     let mut usage_json = json!({
@@ -1860,6 +1890,8 @@ pub async fn post_messages_cc(
             cache_usage,
             tracer,
             key_ctx.group.clone(),
+            key_ctx.token_by_credit,
+            state.pricing_manager.clone(),
         )
         .await
     } else {
@@ -1885,6 +1917,8 @@ pub async fn post_messages_cc(
             cache_usage,
             tracer,
             key_ctx.group.clone(),
+            key_ctx.token_by_credit,
+            state.pricing_manager.clone(),
         )
         .await
     }
@@ -1906,6 +1940,8 @@ async fn handle_stream_request_buffered(
     cache_usage: super::cache_metering::CacheUsage,
     tracer: std::sync::Arc<RequestTracer>,
     group: Option<String>,
+    token_by_credit: super::middleware::TokenByCreditConfig,
+    pricing_manager: Option<crate::model::pricing::SharedPricingManager>,
 ) -> Response {
     // 调用 Kiro API（支持多凭据故障转移）
     let call_result = match provider
@@ -1935,7 +1971,8 @@ async fn handle_stream_request_buffered(
         thinking_enabled,
         tool_name_map,
         known_tool_names,
-    );
+    )
+    .with_token_by_credit(Some(token_by_credit), pricing_manager);
     ctx.set_cache_usage(cache_usage);
 
     // 创建缓冲 SSE 流
@@ -2114,6 +2151,7 @@ mod tests {
                     group: None,
                     key_source: TraceKeySource::MasterApiKey,
                     client_ip: None,
+                    token_by_credit: crate::anthropic::middleware::TokenByCreditConfig::default(),
                 },
                 model: "test-model".to_string(),
                 is_stream: true,

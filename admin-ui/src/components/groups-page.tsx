@@ -18,6 +18,7 @@ import type { GroupItem } from '@/types/api'
 import { ConsoleTable, type ConsoleColumn } from '@/components/console/data-table'
 import { BulkBar } from '@/components/console/bulk-bar'
 import { PageHeader } from '@/components/console/page-header'
+import { CreditPriceInput } from '@/components/credit-price-input'
 
 /**
  * 分组管理页：CRUD 已注册分组。
@@ -39,11 +40,15 @@ export function GroupsPage() {
   const [createOpen, setCreateOpen] = useState(false)
   const [createName, setCreateName] = useState('')
   const [createDesc, setCreateDesc] = useState('')
+  const [createCreditMode, setCreateCreditMode] = useState<'inherit' | 'enabled' | 'disabled'>('inherit')
+  const [createCreditPrice, setCreateCreditPrice] = useState('')
 
   const [editOpen, setEditOpen] = useState(false)
   const [editTarget, setEditTarget] = useState<GroupItem | null>(null)
   const [editNewName, setEditNewName] = useState('')
   const [editDesc, setEditDesc] = useState('')
+  const [editCreditMode, setEditCreditMode] = useState<'inherit' | 'enabled' | 'disabled'>('inherit')
+  const [editCreditPrice, setEditCreditPrice] = useState('')
   const [batchDeleting, setBatchDeleting] = useState(false)
   const [deleteProgress, setDeleteProgress] = useState<{ current: number; total: number } | null>(null)
 
@@ -52,6 +57,8 @@ export function GroupsPage() {
   const openCreate = () => {
     setCreateName('')
     setCreateDesc('')
+    setCreateCreditMode('inherit')
+    setCreateCreditPrice('')
     setCreateOpen(true)
   }
 
@@ -61,10 +68,18 @@ export function GroupsPage() {
       toast.error('分组名不能为空')
       return
     }
+    const priceNum = createCreditPrice.trim() !== '' ? Number(createCreditPrice.trim()) : undefined
+    if (createCreditPrice.trim() !== '' && (!Number.isFinite(priceNum) || (priceNum as number) < 0)) {
+      toast.error('每积分单价必须是非负数')
+      return
+    }
     try {
       await createGroup.mutateAsync({
         name,
         description: createDesc.trim() || undefined,
+        tokenByCreditEnabled:
+          createCreditMode === 'enabled' ? true : createCreditMode === 'disabled' ? false : undefined,
+        creditPrice: Number.isFinite(priceNum) ? priceNum : undefined,
       })
       toast.success(`已创建分组：${name}`)
       setCreateOpen(false)
@@ -77,6 +92,10 @@ export function GroupsPage() {
     setEditTarget(g)
     setEditNewName(g.name)
     setEditDesc(g.description ?? '')
+    setEditCreditMode(
+      g.tokenByCreditEnabled === true ? 'enabled' : g.tokenByCreditEnabled === false ? 'disabled' : 'inherit'
+    )
+    setEditCreditPrice(g.creditPrice != null ? String(g.creditPrice) : '')
     setEditOpen(true)
   }
 
@@ -87,16 +106,26 @@ export function GroupsPage() {
       toast.error('分组名不能为空')
       return
     }
+    const priceNum = editCreditPrice.trim() !== '' ? Number(editCreditPrice.trim()) : undefined
+    if (editCreditPrice.trim() !== '' && (!Number.isFinite(priceNum) || (priceNum as number) < 0)) {
+      toast.error('每积分单价必须是非负数')
+      return
+    }
     try {
       await updateGroup.mutateAsync({
         name: editTarget.name,
         req: {
           newName: newName !== editTarget.name ? newName : undefined,
           description: editDesc, // 空字符串 → 后端清空
+          tokenByCreditEnabled:
+            editCreditMode === 'enabled' ? true : editCreditMode === 'disabled' ? false : undefined,
+          resetTokenByCredit: editCreditMode === 'inherit' ? true : undefined,
+          creditPrice: Number.isFinite(priceNum) ? priceNum : undefined,
+          resetCreditPrice: editCreditPrice.trim() === '' ? true : undefined,
         },
       })
       const renamed = newName !== editTarget.name
-      toast.success(renamed ? `已改名：${editTarget.name} → ${newName}` : '备注已更新')
+      toast.success(renamed ? `已改名：${editTarget.name} → ${newName}` : '分组已更新')
       setEditOpen(false)
     } catch (e) {
       toast.error(extractErrorMessage(e))
@@ -248,6 +277,32 @@ export function GroupsPage() {
         ),
       },
       {
+        id: 'tokenByCredit',
+        header: '计费折算',
+        cell: (g) => {
+          if (g.tokenByCreditEnabled === true) {
+            const kPrice = g.creditPrice != null ? +(g.creditPrice * 1000).toFixed(4) : null
+            return (
+              <Badge
+                variant="outline"
+                className="border-emerald-500/40 text-emerald-600 bg-emerald-500/10 font-normal"
+                title={
+                  g.creditPrice != null
+                    ? `专属单价：$${kPrice}/千分 (折合 $${g.creditPrice}/积分)`
+                    : '跟随全局单价'
+                }
+              >
+                按积分 {kPrice != null ? `($${kPrice}/千分)` : ''}
+              </Badge>
+            )
+          }
+          if (g.tokenByCreditEnabled === false) {
+            return <Badge variant="secondary" className="text-muted-foreground font-normal">真实用量</Badge>
+          }
+          return <span className="text-xs text-muted-foreground">跟随全局</span>
+        },
+      },
+      {
         id: 'createdAt',
         header: '创建时间',
         cell: (g) => (
@@ -389,6 +444,53 @@ export function GroupsPage() {
                   disabled={createGroup.isPending}
                 />
               </div>
+              <div className="space-y-1.5 pt-1">
+                <label className="text-sm font-medium">计费折算模式</label>
+                <div className="grid grid-cols-3 gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={createCreditMode === 'inherit' ? 'default' : 'outline'}
+                    className="text-xs"
+                    onClick={() => setCreateCreditMode('inherit')}
+                  >
+                    跟随全局
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={createCreditMode === 'enabled' ? 'default' : 'outline'}
+                    className="text-xs"
+                    onClick={() => setCreateCreditMode('enabled')}
+                  >
+                    按积分折算
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={createCreditMode === 'disabled' ? 'default' : 'outline'}
+                    className="text-xs"
+                    onClick={() => setCreateCreditMode('disabled')}
+                  >
+                    真实用量
+                  </Button>
+                </div>
+                <p className="text-[11px] text-muted-foreground">
+                  {createCreditMode === 'inherit' && '跟随全局设置：全局开启则换算，全局关闭则返回真实 Token。'}
+                  {createCreditMode === 'enabled' && '对此分组强制按积分价值折算 Token 返回给下游平台。'}
+                  {createCreditMode === 'disabled' && '对此分组如实返回上游产生的真实 Token 数量。'}
+                </p>
+              </div>
+              {createCreditMode === 'enabled' && (
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium">专属计费单价</label>
+                  <CreditPriceInput
+                    value={createCreditPrice}
+                    onChange={setCreateCreditPrice}
+                    disabled={createGroup.isPending}
+                  />
+                </div>
+              )}
             </div>
             <DialogFooter>
               <Button variant="outline" onClick={() => setCreateOpen(false)} disabled={createGroup.isPending}>
@@ -430,6 +532,53 @@ export function GroupsPage() {
                   disabled={updateGroup.isPending}
                 />
               </div>
+              <div className="space-y-1.5 pt-1">
+                <label className="text-sm font-medium">计费折算模式</label>
+                <div className="grid grid-cols-3 gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={editCreditMode === 'inherit' ? 'default' : 'outline'}
+                    className="text-xs"
+                    onClick={() => setEditCreditMode('inherit')}
+                  >
+                    跟随全局
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={editCreditMode === 'enabled' ? 'default' : 'outline'}
+                    className="text-xs"
+                    onClick={() => setEditCreditMode('enabled')}
+                  >
+                    按积分折算
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={editCreditMode === 'disabled' ? 'default' : 'outline'}
+                    className="text-xs"
+                    onClick={() => setEditCreditMode('disabled')}
+                  >
+                    真实用量
+                  </Button>
+                </div>
+                <p className="text-[11px] text-muted-foreground">
+                  {editCreditMode === 'inherit' && '跟随全局设置：全局开启则换算，全局关闭则返回真实 Token。'}
+                  {editCreditMode === 'enabled' && '对此分组强制按积分价值折算 Token 返回给下游平台。'}
+                  {editCreditMode === 'disabled' && '对此分组如实返回上游产生的真实 Token 数量。'}
+                </p>
+              </div>
+              {editCreditMode === 'enabled' && (
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium">专属计费单价</label>
+                  <CreditPriceInput
+                    value={editCreditPrice}
+                    onChange={setEditCreditPrice}
+                    disabled={updateGroup.isPending}
+                  />
+                </div>
+              )}
               {editTarget && (editTarget.credentialCount > 0 || editTarget.clientKeyCount > 0) && (
                 <p className="text-xs text-amber-600">
                   当前被 {editTarget.credentialCount} 凭据 + {editTarget.clientKeyCount} 客户端 Key 引用，改名会自动同步。

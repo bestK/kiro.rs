@@ -1,4 +1,11 @@
 import {
+  Gauge,
+  ShieldAlert,
+  Timer,
+  Activity,
+} from 'lucide-react'
+import { Badge } from '@/components/ui/badge'
+import {
   useAccountThrottleConfig,
   useSetAccountThrottleConfig,
   useAccountRpmLimitConfig,
@@ -47,7 +54,16 @@ function LoadBalancingGroup() {
   const saver = useFieldSaver(mutate, reportSaveError)
 
   return (
-    <SettingGroup title="凭据选择">
+    <SettingGroup
+      title="凭据选择"
+      description="控制多账号并发时调度器的路由策略"
+      icon={<Gauge className="h-4 w-4" />}
+      badge={
+        <Badge variant="outline" className="text-[11px] font-mono">
+          {data?.mode === 'balanced' ? '均衡负载' : '按优先级'}
+        </Badge>
+      }
+    >
       <SettingSegments
         label="负载均衡模式"
         hint={
@@ -80,6 +96,12 @@ function ThrottleGroup() {
     <SettingGroup
       title="账号级风控"
       description="上游对单个账号触发临时限速（429 + suspicious activity）时怎么处理"
+      icon={<ShieldAlert className="h-4 w-4" />}
+      badge={
+        <Badge variant={failover ? 'default' : 'secondary'} className="text-[11px]">
+          {failover ? '故障转移已启用' : '仅原号重试'}
+        </Badge>
+      }
     >
       <SettingSwitch
         label="故障转移"
@@ -131,6 +153,12 @@ function RpmLimitGroup() {
     <SettingGroup
       title="单账号限流"
       description="主动掐住单个账号的每分钟请求数，别等上游风控才反应"
+      icon={<Timer className="h-4 w-4" />}
+      badge={
+        <Badge variant={enabled ? 'default' : 'secondary'} className="text-[11px] font-mono">
+          {enabled ? `${limit} RPM 限流` : '未启用限频'}
+        </Badge>
+      }
     >
       <SettingSwitch
         label="启用 RPM 限流"
@@ -172,6 +200,12 @@ function SelfHealGroup() {
     <SettingGroup
       title="凭据自愈"
       description="请求池全灭时自动把禁用的凭据放回来重试"
+      icon={<Activity className="h-4 w-4" />}
+      badge={
+        <Badge variant={enabled ? 'default' : 'secondary'} className="text-[11px]">
+          {enabled ? '自愈活跃' : '已关闭'}
+        </Badge>
+      }
     >
       <SettingSwitch
         label="启用自愈"

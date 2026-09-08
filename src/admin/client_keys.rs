@@ -61,6 +61,12 @@ pub struct ClientKey {
     /// 老数据无此字段，默认 false。
     #[serde(default, skip_serializing_if = "is_false")]
     pub is_system: bool,
+    /// 该账号是否开启按积分返回 Token（None 表示继承分组或全局配置）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_by_credit_enabled: Option<bool>,
+    /// 该账号 1 积分对应的金额（None 表示继承分组或全局配置）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credit_price: Option<f64>,
 }
 
 /// 鉴权结果：区分「命中」「超额」「未命中」，供中间件返回不同 HTTP 状态。
@@ -197,6 +203,8 @@ impl ClientKeyManager {
             max_credits: None,
             group: group.filter(|g| !g.trim().is_empty()),
             is_system: false,
+            token_by_credit_enabled: None,
+            credit_price: None,
         };
         inner.by_key.insert(plaintext, id);
         inner.entries.insert(id, entry.clone());
@@ -241,6 +249,8 @@ impl ClientKeyManager {
                     max_credits: None,
                     group: None,
                     is_system: true,
+                    token_by_credit_enabled: None,
+                    credit_price: None,
                 },
             );
             changed = true;
@@ -329,6 +339,43 @@ impl ClientKeyManager {
                 }
                 if let Some(g) = group {
                     e.group = g.filter(|s| !s.trim().is_empty());
+                }
+                true
+            }
+            None => false,
+        };
+        if updated {
+            self.save_locked(&inner);
+        }
+        updated
+    }
+
+    /// 查询指定 Key
+    pub fn get(&self, id: u64) -> Option<ClientKey> {
+        self.inner.read().entries.get(&id).cloned()
+    }
+
+    /// 更新按积分返回 Token 的设置
+    pub fn update_token_by_credit(
+        &self,
+        id: u64,
+        enabled: Option<bool>,
+        reset_enabled: bool,
+        price: Option<f64>,
+        reset_price: bool,
+    ) -> bool {
+        let mut inner = self.inner.write();
+        let updated = match inner.entries.get_mut(&id) {
+            Some(e) => {
+                if reset_enabled {
+                    e.token_by_credit_enabled = None;
+                } else if enabled.is_some() {
+                    e.token_by_credit_enabled = enabled;
+                }
+                if reset_price {
+                    e.credit_price = None;
+                } else if price.is_some() {
+                    e.credit_price = price;
                 }
                 true
             }

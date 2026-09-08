@@ -6,13 +6,14 @@ import {
   PackageOpen,
   ShieldCheck,
   Tags,
+  Coins,
 } from 'lucide-react'
 import { PageHeader } from '@/components/console/page-header'
 import { Badge } from '@/components/ui/badge'
-import { Card, CardContent } from '@/components/ui/card'
 import { useUrlState } from '@/hooks/use-url-state'
 import { cn } from '@/lib/utils'
 import { DispatchSection } from '@/components/settings/dispatch-section'
+import { BillingSection } from '@/components/settings/billing-section'
 import { NetworkSection } from '@/components/settings/network-section'
 import { LogSection } from '@/components/settings/log-section'
 import { SystemSection } from '@/components/settings/system-section'
@@ -31,7 +32,7 @@ import { ModelsSection } from '@/components/settings/models-section'
  * 一次点击就该切换完；但参数（冷却时长、连续上限、保留天数这些）全部移到这里 ——
  * 下拉菜单里塞数字输入框本来就不是它该干的事。
  */
-type SectionKey = 'dispatch' | 'metadata' | 'network' | 'log' | 'models' | 'system' | 'security'
+type SectionKey = 'dispatch' | 'billing' | 'models' | 'metadata' | 'network' | 'log' | 'system' | 'security'
 
 const SECTIONS: {
   key: SectionKey
@@ -42,6 +43,16 @@ const SECTIONS: {
     key: 'dispatch',
     label: '调度',
     icon: <Gauge className="h-4 w-4" />,
+  },
+  {
+    key: 'billing',
+    label: '计费折算',
+    icon: <Coins className="h-4 w-4" />,
+  },
+  {
+    key: 'models',
+    label: '模型',
+    icon: <Cpu className="h-4 w-4" />,
   },
   {
     key: 'metadata',
@@ -57,11 +68,6 @@ const SECTIONS: {
     key: 'log',
     label: '日志',
     icon: <ScrollText className="h-4 w-4" />,
-  },
-  {
-    key: 'models',
-    label: '模型',
-    icon: <Cpu className="h-4 w-4" />,
   },
   {
     key: 'system',
@@ -101,44 +107,57 @@ export function SettingsPage() {
         }
       />
 
-      {/* 窄屏设备横向滚动的子菜单导航栏（桌面端由左侧全局侧边栏接管） */}
-      <nav
-        className="flex lg:hidden shrink-0 gap-1 overflow-x-auto px-1 py-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-        aria-label="设置分区"
-      >
-        {SECTIONS.map((s) => (
-          <button
-            key={s.key}
-            type="button"
-            onClick={() => patchUrl({ s: s.key })}
-            aria-current={active === s.key ? 'page' : undefined}
-            className={cn(
-              'inline-flex shrink-0 items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors',
-              'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring',
-              active === s.key
-                ? 'bg-primary/10 text-primary font-semibold'
-                : 'text-muted-foreground hover:bg-accent hover:text-foreground',
-            )}
-          >
-            {s.icon}
-            <span className="whitespace-nowrap">{s.label}</span>
-          </button>
-        ))}
-      </nav>
+      {/* 设置分区导航栏（全端通用） */}
+      <div className="border-b border-border/60 pb-1">
+        <nav
+          className="flex gap-1.5 overflow-x-auto p-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          aria-label="设置分区"
+        >
+          {SECTIONS.map((s) => {
+            const isActive = active === s.key
+            return (
+              <button
+                key={s.key}
+                type="button"
+                onClick={() => patchUrl({ s: s.key })}
+                aria-current={isActive ? 'page' : undefined}
+                className={cn(
+                  'inline-flex shrink-0 items-center gap-2 rounded-lg px-3 py-1.5 text-xs font-medium transition-all',
+                  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
+                  isActive
+                    ? 'bg-primary text-primary-foreground shadow-xs font-semibold'
+                    : 'text-muted-foreground hover:bg-accent/70 hover:text-foreground',
+                )}
+              >
+                {s.icon}
+                <span className="whitespace-nowrap">{s.label}</span>
+                {s.key === 'billing' && (
+                  <span
+                    className={cn(
+                      'rounded px-1 text-[10px] uppercase font-mono font-semibold leading-tight',
+                      isActive
+                        ? 'bg-primary-foreground/20 text-primary-foreground'
+                        : 'bg-amber-500/15 text-amber-600 dark:text-amber-400',
+                    )}
+                  >
+                    New
+                  </span>
+                )}
+              </button>
+            )
+          })}
+        </nav>
+      </div>
 
-      <div className="flex flex-col gap-4">
-
-        <Card className="min-w-0 flex-1">
-          <CardContent className="p-4 sm:p-5">
-            {active === 'dispatch' && <DispatchSection />}
-            {active === 'metadata' && <MetadataSection />}
-            {active === 'models' && <ModelsSection />}
-            {active === 'network' && <NetworkSection />}
-            {active === 'log' && <LogSection />}
-            {active === 'system' && <SystemSection />}
-            {active === 'security' && <SecuritySection />}
-          </CardContent>
-        </Card>
+      <div className="min-w-0 flex-1">
+        {active === 'dispatch' && <DispatchSection />}
+        {active === 'billing' && <BillingSection />}
+        {active === 'models' && <ModelsSection />}
+        {active === 'metadata' && <MetadataSection />}
+        {active === 'network' && <NetworkSection />}
+        {active === 'log' && <LogSection />}
+        {active === 'system' && <SystemSection />}
+        {active === 'security' && <SecuritySection />}
       </div>
     </div>
   )

@@ -26,6 +26,12 @@ import {
   setLogGovernanceConfig,
   getCacheMeteringConfig,
   setCacheMeteringConfig,
+  getTokenByCreditConfig,
+  setTokenByCreditConfig,
+  verifyDownstreamBilling,
+  getBillingVerifications,
+  clearBillingVerifications,
+  fetchTokenByCreditModels,
   getSessionAffinityConfig,
   setSessionAffinityConfig,
   getGlobalProxy,
@@ -355,6 +361,62 @@ export function useSetCacheMeteringConfig() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['cacheMeteringConfig'] })
     },
+  })
+}
+
+// 获取全局按积分返回 Token 配置
+export function useTokenByCreditConfig() {
+  return useQuery({
+    queryKey: ['tokenByCreditConfig'],
+    queryFn: getTokenByCreditConfig,
+  })
+}
+
+// 更新全局按积分返回 Token 配置
+export function useSetTokenByCreditConfig() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: setTokenByCreditConfig,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['tokenByCreditConfig'] })
+    },
+  })
+}
+
+// 下游计费验证历史
+export function useBillingVerifications() {
+  return useQuery({
+    queryKey: ['billingVerifications'],
+    queryFn: getBillingVerifications,
+  })
+}
+
+// 发起下游计费验证
+export function useVerifyDownstreamBilling() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: verifyDownstreamBilling,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['billingVerifications'] })
+    },
+  })
+}
+
+// 清空计费验证历史
+export function useClearBillingVerifications() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: clearBillingVerifications,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['billingVerifications'] })
+    },
+  })
+}
+
+// 拉取 /v1/models 模型列表
+export function useFetchTokenByCreditModels() {
+  return useMutation({
+    mutationFn: fetchTokenByCreditModels,
   })
 }
 

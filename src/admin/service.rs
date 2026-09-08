@@ -45,6 +45,7 @@ use super::types::{
     ExportedCredentials, GitHubRateLimitInfo, ImageUpdateResponse, LoadBalancingModeResponse,
     CredentialMetadataSchemaConfig,
     CacheMeteringConfigResponse, SetCacheMeteringConfigRequest,
+    TokenByCreditConfigResponse, SetTokenByCreditConfigRequest,
     SessionAffinityConfigResponse, SetSessionAffinityConfigRequest,
     LogGovernanceConfigResponse, ModelSelectionMode, ModelTestRequest, ModelTestResponse,
     PollIdcLoginResponse, ProxyCheckAllResponse, ProxyCheckResponse, ProxyPoolEntry,
@@ -54,6 +55,8 @@ use super::types::{
     SetSelfHealConfigRequest, SetCustomModelsRequest, SetUpdateConfigRequest, StartIdcLoginRequest, StartIdcLoginResponse,
     StartSocialLoginRequest, StartSocialLoginResponse, UpdateCheckInfo, UpdateConfigResponse,
     UpdateCredentialRequest, UpdateRefreshTokenRequest,
+    VerifyBillingRequest, VerifyBillingResponse, VerifyBillingHistoryItem,
+    FetchModelsRequest, FetchModelsResponse,
 };
 
 /// 余额缓存过期时间（秒），5 分钟
@@ -321,6 +324,12 @@ pub struct AdminService {
     usage_recorder: Option<crate::admin::usage_stats::SharedRecorder>,
     /// prompt cache 本地计量模拟句柄（开关运行时可改）
     cache_meter: Option<crate::anthropic::cache_metering::SharedCacheMeter>,
+    /// 全局按积分返回 Token 运行时状态
+    token_by_credit: Option<crate::model::pricing::SharedTokenByCredit>,
+    /// 模型定价管理器
+    pricing_manager: Option<crate::model::pricing::SharedPricingManager>,
+    /// 计费对齐验证历史记录（最多保留最近 50 条）
+    billing_verifications: Mutex<Vec<VerifyBillingHistoryItem>>,
 }
 
 /// Social 登录会话状态
@@ -677,6 +686,9 @@ impl AdminService {
             trace_store: None,
             usage_recorder: None,
             cache_meter: None,
+            token_by_credit: None,
+            pricing_manager: None,
+            billing_verifications: Mutex::new(Vec::new()),
         };
 
         // 后台任务：每 5 分钟清理过期的登录会话，防止内存泄漏
@@ -766,6 +778,473 @@ impl AdminService {
         }
 
         Ok(self.get_cache_metering_config())
+    }
+
+    /// 注入全局按积分返回 Token 运行时配置与模型定价管理器
+    pub fn with_token_by_credit(
+        mut self,
+        token_by_credit: Option<crate::model::pricing::SharedTokenByCredit>,
+        pricing_manager: Option<crate::model::pricing::SharedPricingManager>,
+    ) -> Self {
+        self.token_by_credit = token_by_credit;
+        self.pricing_manager = pricing_manager;
+        self
+    }
+
+    /// 查询全局按积分返回 Token 配置。
+    pub fn get_token_by_credit_config(&self) -> TokenByCreditConfigResponse {
+        if let Some(tbc) = &self.token_by_credit {
+            let state = tbc.read();
+            TokenByCreditConfigResponse {
+                enabled: state.enabled,
+                credit_price: state.credit_price,
+                models_dev_url: state.models_dev_url.clone(),
+                pricing_refresh_hours: state.pricing_refresh_hours,
+                simulated_cache_enabled: state.simulated_cache_enabled,
+                simulated_cache_ratio: state.simulated_cache_ratio,
+            }
+        } else {
+            let config = self.token_manager.config();
+            TokenByCreditConfigResponse {
+                enabled: config.token_by_credit_enabled,
+                credit_price: config.token_by_credit_price,
+                models_dev_url: config.models_dev_url.clone(),
+                pricing_refresh_hours: config.pricing_refresh_hours,
+                simulated_cache_enabled: config.simulated_cache_enabled,
+                simulated_cache_ratio: config.simulated_cache_ratio,
+            }
+        }
+    }
+
+    /// 更新全局按积分返回 Token 配置（同步更新运行时状态并持久化 config.json）。
+    pub fn set_token_by_credit_config(
+        &self,
+        req: SetTokenByCreditConfigRequest,
+    ) -> Result<TokenByCreditConfigResponse, AdminServiceError> {
+        // 1. 同步更新内存中运行时状态
+        if let Some(tbc) = &self.token_by_credit {
+            let mut state = tbc.write();
+            if let Some(enabled) = req.enabled {
+                state.enabled = enabled;
+            }
+            if let Some(price) = req.credit_price {
+                state.credit_price = price;
+            }
+            if let Some(ref url) = req.models_dev_url {
+                state.models_dev_url = url.clone();
+                if let Some(pm) = &self.pricing_manager {
+                    pm.set_models_dev_url(url.clone());
+                    let pm_clone = pm.clone();
+                    tokio::spawn(async move {
+                        pm_clone.refresh_prices().await;
+                    });
+                }
+            }
+            if let Some(hours) = req.pricing_refresh_hours {
+                state.pricing_refresh_hours = hours;
+            }
+            if let Some(cache_enabled) = req.simulated_cache_enabled {
+                state.simulated_cache_enabled = cache_enabled;
+            }
+            if let Some(ratio) = req.simulated_cache_ratio {
+                state.simulated_cache_ratio = ratio;
+            }
+        }
+
+        // 2. 持久化到 config.json
+        if let Err(e) = self.token_manager.update_config_file(|config| {
+            if let Some(enabled) = req.enabled {
+                config.token_by_credit_enabled = enabled;
+            }
+            if let Some(price) = req.credit_price {
+                config.token_by_credit_price = price;
+            }
+            if let Some(ref url) = req.models_dev_url {
+                config.models_dev_url = url.clone();
+            }
+            if let Some(hours) = req.pricing_refresh_hours {
+                config.pricing_refresh_hours = hours;
+            }
+            if let Some(cache_enabled) = req.simulated_cache_enabled {
+                config.simulated_cache_enabled = cache_enabled;
+            }
+            if let Some(ratio) = req.simulated_cache_ratio {
+                config.simulated_cache_ratio = ratio;
+            }
+        }) {
+            tracing::warn!("持久化按积分返回 Token 配置失败: {}", e);
+        }
+
+        Ok(self.get_token_by_credit_config())
+    }
+
+    /// 对下游发起测试请求，验证价格折算与 Token 对齐情况
+    pub async fn verify_downstream_billing(
+        &self,
+        req: VerifyBillingRequest,
+    ) -> Result<VerifyBillingResponse, AdminServiceError> {
+        let base_url = req.base_url.trim().trim_end_matches('/');
+        if base_url.is_empty() {
+            return Err(AdminServiceError::InvalidCredential("下游地址不能为空".to_string()));
+        }
+        let api_key = req.api_key.trim();
+        if api_key.is_empty() {
+            return Err(AdminServiceError::InvalidCredential("下游 API Key 不能为空".to_string()));
+        }
+
+        let client = match reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+        {
+            Ok(c) => c,
+            Err(e) => return Err(AdminServiceError::InternalError(format!("创建 HTTP 客户端失败: {}", e))),
+        };
+
+        let start = std::time::Instant::now();
+        let anthropic_url = format!("{}/v1/messages", base_url);
+        let anthropic_body = serde_json::json!({
+            "model": req.model,
+            "max_tokens": 10,
+            "messages": [
+                { "role": "user", "content": req.prompt }
+            ]
+        });
+
+        let resp_result = client
+            .post(&anthropic_url)
+            .header("x-api-key", api_key)
+            .header("anthropic-version", "2023-06-01")
+            .header("content-type", "application/json")
+            .json(&anthropic_body)
+            .send()
+            .await;
+
+        let duration_ms = start.elapsed().as_millis() as u64;
+
+        let (status, resp_text) = match resp_result {
+            Ok(resp) => {
+                let status = resp.status().as_u16();
+                let text = resp.text().await.unwrap_or_default();
+                (status, text)
+            }
+            Err(e) => {
+                let err_msg = format!("网络请求失败: {}", e);
+                let history_item = VerifyBillingHistoryItem {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    created_at: chrono::Utc::now().to_rfc3339(),
+                    base_url: base_url.to_string(),
+                    model: req.model.clone(),
+                    duration_ms,
+                    success: false,
+                    status: 0,
+                    input_tokens: 0,
+                    output_tokens: 0,
+                    cache_read_tokens: 0,
+                    calculated_cost_usd: 0.0,
+                    estimated_credits: 0.0,
+                    estimated_quota: 0,
+                    error: Some(err_msg.clone()),
+                };
+                {
+                    let mut list = self.billing_verifications.lock();
+                    list.insert(0, history_item);
+                    if list.len() > 50 {
+                        list.truncate(50);
+                    }
+                }
+                return Ok(VerifyBillingResponse {
+                    success: false,
+                    status: 0,
+                    duration_ms,
+                    input_tokens: 0,
+                    output_tokens: 0,
+                    cache_read_tokens: 0,
+                    cache_creation_tokens: 0,
+                    model: req.model,
+                    model_input_price: 0.0,
+                    model_output_price: 0.0,
+                    calculated_cost_usd: 0.0,
+                    estimated_credits: 0.0,
+                    estimated_quota: 0,
+                    error: Some(err_msg),
+                    raw_response: None,
+                });
+            }
+        };
+
+        let mut input_tokens = 0u64;
+        let mut output_tokens = 0u64;
+        let mut cache_read_tokens = 0u64;
+        let mut cache_creation_tokens = 0u64;
+        let mut parse_err = None;
+
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&resp_text) {
+            if let Some(usage) = v.get("usage") {
+                input_tokens = usage.get("input_tokens").and_then(|t| t.as_u64()).unwrap_or(0);
+                output_tokens = usage.get("output_tokens").and_then(|t| t.as_u64()).unwrap_or(0);
+                cache_read_tokens = usage.get("cache_read_input_tokens").and_then(|t| t.as_u64()).unwrap_or(0);
+                cache_creation_tokens = usage.get("cache_creation_input_tokens").and_then(|t| t.as_u64()).unwrap_or(0);
+            } else if let Some(err) = v.get("error") {
+                parse_err = Some(err.to_string());
+            }
+        } else {
+            parse_err = Some("响应内容非有效 JSON".to_string());
+        }
+
+        let is_success = status >= 200 && status < 300 && parse_err.is_none();
+
+        // 依据模型官方定价核算
+        let cost = if let Some(pm) = &self.pricing_manager {
+            pm.get_cost(&req.model)
+        } else {
+            crate::model::pricing::ModelCost::default()
+        };
+
+        let in_price = cost.input;
+        let out_price = cost.output;
+        let cache_price = in_price * 0.1;
+
+        let calculated_cost_usd = (input_tokens as f64 * (in_price / 1_000_000.0))
+            + (cache_read_tokens as f64 * (cache_price / 1_000_000.0))
+            + (output_tokens as f64 * (out_price / 1_000_000.0));
+
+        let credit_price = if let Some(custom_price) = req.credit_price.filter(|p| *p > 0.0) {
+            custom_price
+        } else if let Some(tbc) = &self.token_by_credit {
+            tbc.read().credit_price
+        } else {
+            self.token_manager.config().token_by_credit_price
+        };
+
+        let estimated_credits = if credit_price > 0.0 {
+            calculated_cost_usd / credit_price
+        } else {
+            0.0
+        };
+
+        let estimated_quota = (calculated_cost_usd * 500_000.0).round() as u64;
+
+        let err_desc = if is_success {
+            None
+        } else {
+            parse_err.clone().or_else(|| Some(format!("HTTP 状态码: {}", status)))
+        };
+
+        let history_item = VerifyBillingHistoryItem {
+            id: uuid::Uuid::new_v4().to_string(),
+            created_at: chrono::Utc::now().to_rfc3339(),
+            base_url: base_url.to_string(),
+            model: req.model.clone(),
+            duration_ms,
+            success: is_success,
+            status,
+            input_tokens,
+            output_tokens,
+            cache_read_tokens,
+            calculated_cost_usd,
+            estimated_credits,
+            estimated_quota,
+            error: err_desc.clone(),
+        };
+
+        {
+            let mut list = self.billing_verifications.lock();
+            list.insert(0, history_item);
+            if list.len() > 50 {
+                list.truncate(50);
+            }
+        }
+
+        Ok(VerifyBillingResponse {
+            success: is_success,
+            status,
+            duration_ms,
+            input_tokens,
+            output_tokens,
+            cache_read_tokens,
+            cache_creation_tokens,
+            model: req.model,
+            model_input_price: in_price,
+            model_output_price: out_price,
+            calculated_cost_usd,
+            estimated_credits,
+            estimated_quota,
+            error: err_desc,
+            raw_response: Some(resp_text),
+        })
+    }
+
+    /// 从 JSON 字符串解析模型列表（兼容 OpenAI data 格式与 Anthropic models 格式及字符串数组）
+    fn parse_models_from_json(text: &str) -> Vec<String> {
+        let mut result = Vec::new();
+        let Ok(val) = serde_json::from_str::<serde_json::Value>(text) else {
+            return result;
+        };
+
+        let items_opt = if let Some(arr) = val.get("data").and_then(|d| d.as_array()) {
+            Some(arr)
+        } else if let Some(arr) = val.get("models").and_then(|d| d.as_array()) {
+            Some(arr)
+        } else {
+            val.as_array()
+        };
+
+        if let Some(items) = items_opt {
+            for item in items {
+                if let Some(id) = item.get("id").and_then(|s| s.as_str()) {
+                    let id = id.trim();
+                    if !id.is_empty() && !result.iter().any(|x: &String| x == id) {
+                        result.push(id.to_string());
+                    }
+                } else if let Some(name) = item.get("name").and_then(|s| s.as_str()) {
+                    let name = name.trim();
+                    if !name.is_empty() && !result.iter().any(|x: &String| x == name) {
+                        result.push(name.to_string());
+                    }
+                } else if let Some(id) = item.as_str() {
+                    let id = id.trim();
+                    if !id.is_empty() && !result.iter().any(|x: &String| x == id) {
+                        result.push(id.to_string());
+                    }
+                }
+            }
+        }
+
+        result
+    }
+
+    /// 获取验证历史列表
+    pub fn get_billing_verifications(&self) -> Vec<VerifyBillingHistoryItem> {
+        self.billing_verifications.lock().clone()
+    }
+
+    /// 清空验证历史记录
+    pub fn clear_billing_verifications(&self) {
+        self.billing_verifications.lock().clear();
+    }
+
+    /// 获取本地聚合模型名称列表
+    pub async fn get_local_model_names(&self) -> Vec<String> {
+        let mut set = std::collections::BTreeSet::new();
+
+        // 1. 从当前可用凭据中提取
+        if let Ok(resp) = self.get_current_available_models().await {
+            for m in resp.models {
+                let id = m.model_id.trim();
+                if !id.is_empty() {
+                    set.insert(id.to_string());
+                }
+            }
+        }
+
+        // 2. 自定义模型配置
+        for m in crate::model::custom_models::all() {
+            let id = m.id.trim();
+            if !id.is_empty() {
+                set.insert(id.to_string());
+            }
+        }
+
+        // 3. 内置兜底与常用模型
+        let defaults = [
+            "claude-sonnet-5",
+            "claude-3-7-sonnet-20250219",
+            "claude-3-5-sonnet-20241022",
+            "claude-3-5-haiku-20241022",
+            "claude-haiku-4.5",
+            "claude-opus-4.5",
+            "claude-opus-4.6",
+            "claude-opus-4.7",
+            "claude-opus-4.8",
+            "claude-opus-5",
+            "glm-5",
+            "deepseek-3.2",
+            "minimax-m2.5",
+        ];
+        for d in defaults {
+            set.insert(d.to_string());
+        }
+
+        set.into_iter().collect()
+    }
+
+    /// 拉取 /v1/models 模型列表（若提供下游地址与密钥，则请求下游接口；否则拉取本地模型）
+    pub async fn fetch_models(
+        &self,
+        req: FetchModelsRequest,
+    ) -> Result<FetchModelsResponse, AdminServiceError> {
+        let base_url = req.base_url.as_deref().unwrap_or("").trim().trim_end_matches('/');
+        let api_key = req.api_key.as_deref().unwrap_or("").trim();
+
+        if !base_url.is_empty() {
+            let client = match reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(10))
+                .build()
+            {
+                Ok(c) => c,
+                Err(e) => return Err(AdminServiceError::InternalError(format!("创建 HTTP 客户端失败: {}", e))),
+            };
+
+            let models_url = format!("{}/v1/models", base_url);
+            let mut req_builder = client.get(&models_url);
+            if !api_key.is_empty() {
+                req_builder = req_builder
+                    .header("Authorization", format!("Bearer {}", api_key))
+                    .header("x-api-key", api_key);
+            }
+
+            match req_builder.send().await {
+                Ok(resp) => {
+                    let status = resp.status();
+                    if status.is_success() {
+                        let text = resp.text().await.unwrap_or_default();
+                        let models = Self::parse_models_from_json(&text);
+                        if !models.is_empty() {
+                            return Ok(FetchModelsResponse {
+                                success: true,
+                                source: "downstream".to_string(),
+                                models,
+                                error: None,
+                            });
+                        } else {
+                            let local = self.get_local_model_names().await;
+                            return Ok(FetchModelsResponse {
+                                success: false,
+                                source: "downstream".to_string(),
+                                models: local,
+                                error: Some("下游接口未返回任何有效模型 ID，已展示本地模型".to_string()),
+                            });
+                        }
+                    } else {
+                        let err_text = resp.text().await.unwrap_or_default();
+                        let local = self.get_local_model_names().await;
+                        return Ok(FetchModelsResponse {
+                            success: false,
+                            source: "downstream".to_string(),
+                            models: local,
+                            error: Some(format!("下游接口返回错误 HTTP {}: {}", status, err_text.chars().take(120).collect::<String>())),
+                        });
+                    }
+                }
+                Err(e) => {
+                    let local = self.get_local_model_names().await;
+                    return Ok(FetchModelsResponse {
+                        success: false,
+                        source: "downstream".to_string(),
+                        models: local,
+                        error: Some(format!("请求下游 /v1/models 失败: {}", e)),
+                    });
+                }
+            }
+        }
+
+        let models = self.get_local_model_names().await;
+        Ok(FetchModelsResponse {
+            success: true,
+            source: "local".to_string(),
+            models,
+            error: None,
+        })
     }
 
     /// 获取所有凭据状态
@@ -3958,5 +4437,23 @@ mod tests {
             "Enterprise"
         );
         assert_eq!(subscription_type_from_title(None), "Free");
+    }
+
+    #[test]
+    fn test_parse_models_from_json() {
+        // OpenAI / New API format: { "data": [{ "id": "model-a" }] }
+        let openai_json = r#"{"object":"list","data":[{"id":"claude-3-7-sonnet-20250219"},{"id":"claude-sonnet-5"}]}"#;
+        let parsed = AdminService::parse_models_from_json(openai_json);
+        assert_eq!(parsed, vec!["claude-3-7-sonnet-20250219", "claude-sonnet-5"]);
+
+        // Anthropic models format: { "models": [{ "id": "m1" }, { "name": "m2" }] }
+        let anthropic_json = r#"{"models":[{"id":"m1"},{"name":"m2"}]}"#;
+        let parsed = AdminService::parse_models_from_json(anthropic_json);
+        assert_eq!(parsed, vec!["m1", "m2"]);
+
+        // Array format: ["a", "b"]
+        let array_json = r#"["gpt-4o", "claude-3-5-sonnet"]"#;
+        let parsed = AdminService::parse_models_from_json(array_json);
+        assert_eq!(parsed, vec!["gpt-4o", "claude-3-5-sonnet"]);
     }
 }

@@ -302,9 +302,57 @@ pub struct Config {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub credential_metadata_schema: Option<serde_json::Value>,
 
+    /// 是否开启按积分返回 Token 开关（全局）。默认 false。
+    #[serde(default = "default_token_by_credit_enabled")]
+    pub token_by_credit_enabled: bool,
+
+    /// 全局 1 积分对应的金额（USD，与 models.dev 定价单位一致）。默认 0.002。
+    #[serde(default = "default_token_by_credit_price")]
+    pub token_by_credit_price: f64,
+
+    /// 模型定价数据源 URL（默认 https://models.dev/api.json）
+    #[serde(default = "default_models_dev_url")]
+    pub models_dev_url: String,
+
+    /// 模型定价刷新周期（小时，默认 24）
+    #[serde(default = "default_pricing_refresh_hours")]
+    pub pricing_refresh_hours: u64,
+
+    /// 模拟 Prompt 缓存开关（默认 false）
+    #[serde(default = "default_simulated_cache_enabled")]
+    pub simulated_cache_enabled: bool,
+
+    /// 模拟 Prompt 缓存命中比率（默认 0.8，即 80%）
+    #[serde(default = "default_simulated_cache_ratio")]
+    pub simulated_cache_ratio: f64,
+
     /// 配置文件路径（运行时元数据，不写入 JSON）
     #[serde(skip)]
     config_path: Option<PathBuf>,
+}
+
+fn default_token_by_credit_enabled() -> bool {
+    false
+}
+
+fn default_token_by_credit_price() -> f64 {
+    0.002
+}
+
+fn default_models_dev_url() -> String {
+    "https://models.dev/api.json".to_string()
+}
+
+fn default_pricing_refresh_hours() -> u64 {
+    24
+}
+
+fn default_simulated_cache_enabled() -> bool {
+    false
+}
+
+fn default_simulated_cache_ratio() -> f64 {
+    0.8
 }
 
 fn default_host() -> String {
@@ -463,6 +511,12 @@ impl Default for Config {
             endpoints: HashMap::new(),
             custom_models: Vec::new(),
             credential_metadata_schema: None,
+            token_by_credit_enabled: default_token_by_credit_enabled(),
+            token_by_credit_price: default_token_by_credit_price(),
+            models_dev_url: default_models_dev_url(),
+            pricing_refresh_hours: default_pricing_refresh_hours(),
+            simulated_cache_enabled: default_simulated_cache_enabled(),
+            simulated_cache_ratio: default_simulated_cache_ratio(),
             config_path: None,
         }
     }

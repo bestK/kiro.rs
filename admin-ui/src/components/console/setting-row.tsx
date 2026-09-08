@@ -179,6 +179,7 @@ export function SettingNumber({
   min,
   max,
   unit,
+  step,
   pending,
   saved,
   disabled,
@@ -194,6 +195,7 @@ export function SettingNumber({
   min: number
   max: number
   unit?: string
+  step?: number | string
   pending?: boolean
   /** 该字段刚保存成功（由 useFieldSaver 按字段给出） */
   saved?: boolean
@@ -248,6 +250,7 @@ export function SettingNumber({
       <div className="flex items-center gap-1.5">
         <Input
           type="number"
+          step={step ?? 'any'}
           min={min}
           max={max}
           value={draft}
@@ -348,23 +351,49 @@ export function SettingReadout({
 export function SettingGroup({
   title,
   description,
+  badge,
+  icon,
   children,
+  className,
+  headerRight,
 }: {
   title: string
-  description?: string
+  description?: React.ReactNode
+  badge?: React.ReactNode
+  icon?: React.ReactNode
   children: React.ReactNode
+  className?: string
+  headerRight?: React.ReactNode
 }) {
   return (
-    <section className="console-scope">
-      <div className="mb-3">
-        <h2 className="text-base font-semibold tracking-tight">{title}</h2>
-        {description && (
-          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-            {description}
-          </p>
-        )}
+    <section
+      className={cn(
+        'rounded-xl border border-border/80 bg-card shadow-xs overflow-hidden transition-colors',
+        className,
+      )}
+    >
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between px-5 py-3.5 border-b border-border/60 bg-muted/25">
+        <div className="flex items-start sm:items-center gap-3">
+          {icon && (
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary border border-primary/20">
+              {icon}
+            </div>
+          )}
+          <div>
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="text-sm font-semibold tracking-tight text-foreground">{title}</h2>
+              {badge}
+            </div>
+            {description && (
+              <p className="mt-0.5 text-xs text-muted-foreground leading-relaxed">
+                {description}
+              </p>
+            )}
+          </div>
+        </div>
+        {headerRight && <div className="shrink-0">{headerRight}</div>}
       </div>
-      <div>{children}</div>
+      <div className="px-5 py-3">{children}</div>
     </section>
   )
 }

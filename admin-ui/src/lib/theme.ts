@@ -29,8 +29,8 @@ export const DEFAULT_THEME_SELECTION: ThemeSelection = {
 export const THEME_METADATA: readonly ThemeMetadata[] = [
   {
     id: 'system',
-    name: 'sub2api 青',
-    description: '官方网关标志性翡翠冷青',
+    name: '翡翠冷青',
+    description: '沉稳清冽的标志翡翠青',
     swatch: 'hsl(175 84% 32%)',
   },
   {

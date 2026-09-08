@@ -1442,9 +1442,15 @@ pub struct StreamContext {
     tool_json_accumulator: ToolJsonAccumulator,
     /// 工具调用 JSON 错误（非法 / 半截）。一旦置位，收尾时补发 `error` 事件，
     /// 上层据此把本次请求记为 error 而非 success。
+    /// 工具调用 JSON 错误（非法 / 半截）。一旦置位，收尾时补发 `error` 事件，
+    /// 上层据此把本次请求记为 error 而非 success。
     tool_json_error: Option<ToolJsonAccumulatorError>,
     /// 跨 chunk 过滤混入 assistant 文本的字面 `<tool_use>` XML 泄漏。
     tool_use_xml_filter: ToolUseXmlLeakFilter,
+    /// 按积分返回 Token 配置
+    pub token_by_credit: Option<super::middleware::TokenByCreditConfig>,
+    /// 模型定价管理器
+    pub pricing_manager: Option<crate::model::pricing::SharedPricingManager>,
 }
 
 impl StreamContext {
@@ -1472,6 +1478,47 @@ impl StreamContext {
             .map(|usage| usage.sanitized().output_tokens)
             .unwrap_or(self.output_tokens)
             .max(0)
+    }
+
+    /// 若开启按积分返回 Token 且有消耗积分，计算倒推后的 Token 分布；否则返回原始计算值。
+    pub fn resolved_adjusted_usage(&self) -> (i32, i32, i32, i32) {
+        let (mut input, mut creation, mut read) = self.resolved_usage();
+        let mut output = self.resolved_output_tokens();
+
+        if let Some(tbc) = &self.token_by_credit {
+            if tbc.enabled && self.credits > 0.0 {
+                let cost = self
+                    .pricing_manager
+                    .as_ref()
+                    .map(|pm| pm.get_cost(&self.model))
+                    .unwrap_or_default();
+                let adj = crate::model::pricing::calculate_tokens_by_credit(
+                    input.max(0) as u64,
+                    output.max(0) as u64,
+                    self.credits,
+                    tbc.credit_price,
+                    &cost,
+                    tbc.simulated_cache_enabled,
+                    tbc.simulated_cache_ratio,
+                );
+                input = adj.input_tokens as i32;
+                output = adj.output_tokens as i32;
+                creation = adj.cache_creation_tokens as i32;
+                read = adj.cache_read_tokens as i32;
+            }
+        }
+        (input, output, creation, read)
+    }
+
+    /// 设置按积分返回 Token 配置
+    pub fn with_token_by_credit(
+        mut self,
+        config: Option<super::middleware::TokenByCreditConfig>,
+        pricing: Option<crate::model::pricing::SharedPricingManager>,
+    ) -> Self {
+        self.token_by_credit = config;
+        self.pricing_manager = pricing;
+        self
     }
 
     /// 工具调用 JSON 错误信息（非法 / 半截）。上层据此把本次请求记为 error、
@@ -1519,6 +1566,8 @@ impl StreamContext {
             tool_json_accumulator: ToolJsonAccumulator::new(),
             tool_json_error: None,
             tool_use_xml_filter: ToolUseXmlLeakFilter::default(),
+            token_by_credit: None,
+            pricing_manager: None,
         }
     }
 
@@ -2561,9 +2610,9 @@ impl StreamContext {
             return events;
         }
 
-        // 精确 metadata 真值优先；缺失时才使用 contextUsage/估算回退。
-        let (final_input_tokens, cache_creation, cache_read) = self.resolved_usage();
-        let final_output_tokens = self.resolved_output_tokens();
+        // 精确 metadata 真值优先；缺失时才使用 contextUsage/估算回退；支持按积分倒推 Token。
+        let (final_input_tokens, final_output_tokens, cache_creation, cache_read) =
+            self.resolved_adjusted_usage();
 
         // 生成最终事件（message_delta + message_stop）
         events.extend(self.state_manager.generate_final_events(
@@ -2591,16 +2640,17 @@ impl StreamContext {
     }
 }
 
-/// 缓冲流处理上下文 - 用于 /cc/v1/messages 流式请求
+/// 缓冲所有 SSE 事件的流式处理上下文
 ///
-/// 与 `StreamContext` 不同，此上下文会缓冲所有事件直到流结束，
-/// 然后用从 `contextUsageEvent` 计算的正确 `input_tokens` 更正 `message_start` 事件。
+/// 当启用 Claude Code 兼容模式时，流式响应不能在收到第一个 chunk 时就发送 `message_start`，
+/// 因为此时真实的 `input_tokens` 还没从 `contextUsageEvent` 拿到。如果过早发送 `message_start`，
+/// 里面的 `input_tokens` 就只能是本地预估值（可能严重偏小，如仅计算最后一条消息）。
 ///
-/// 工作流程：
-/// 1. 使用 `StreamContext` 正常处理所有 Kiro 事件
-/// 2. 把生成的 SSE 事件缓存起来（而不是立即发送）
-/// 3. 流结束时，找到 `message_start` 事件并更新其 `input_tokens`
-/// 4. 一次性返回所有事件
+/// 此上下文会缓冲所有事件，直到整个流结束：
+/// 1. 缓冲期间正常处理所有 Kiro 事件（累计文本、工具调用等）
+/// 2. 流结束时，从 `contextUsageEvent` 计算出正确的 `input_tokens`
+/// 3. 更正 `message_start` 事件中的 `input_tokens`
+/// 4. 一次性将所有事件（message_start, content_block_*, message_delta, message_stop）返回
 pub struct BufferedStreamContext {
     /// 内部流处理上下文（复用现有的事件处理逻辑）
     inner: StreamContext,
@@ -2631,6 +2681,16 @@ impl BufferedStreamContext {
             event_buffer: Vec::new(),
             initial_events_generated: false,
         }
+    }
+
+    /// 设置按积分返回 Token 配置
+    pub fn with_token_by_credit(
+        mut self,
+        config: Option<super::middleware::TokenByCreditConfig>,
+        pricing: Option<crate::model::pricing::SharedPricingManager>,
+    ) -> Self {
+        self.inner = self.inner.with_token_by_credit(config, pricing);
+        self
     }
 
     /// 注入由 CacheMeter 计算的缓存覆盖情况（estimate 口径），最终上报时分摊。
@@ -2668,8 +2728,9 @@ impl BufferedStreamContext {
             self.initial_events_generated = true;
         }
 
-        // 互斥口径分摊：total 真值 − 缓存覆盖 = 未缓存 input（与 inner 收尾一致）。
-        let (final_input_tokens, cache_creation, cache_read) = self.inner.resolved_usage();
+        // 互斥口径分摊，并支持按积分倒推
+        let (final_input_tokens, _final_output_tokens, cache_creation, cache_read) =
+            self.inner.resolved_adjusted_usage();
 
         // 生成最终事件（StreamContext 内部会用同样的优先级与分摊）
         let final_events = self.inner.generate_final_events();
@@ -2695,14 +2756,8 @@ impl BufferedStreamContext {
     ///
     /// 返回顺序：(input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, credits)
     pub fn final_usage(&self) -> (i32, i32, i32, i32, f64) {
-        let (input, creation, read) = self.inner.resolved_usage();
-        (
-            input,
-            self.inner.resolved_output_tokens(),
-            creation,
-            read,
-            self.inner.credits,
-        )
+        let (input, output, creation, read) = self.inner.resolved_adjusted_usage();
+        (input, output, creation, read, self.inner.credits)
     }
 
     /// 上游是否下发了精确 tokenUsage；配合 [`Self::cache_usage`] 推断 usage 来源。
@@ -5517,4 +5572,35 @@ mod tests {
             .data["usage"];
         assert_eq!(delta_usage["output_tokens"], json!(11));
     }
+
+    #[test]
+    fn test_token_by_credit_streaming() {
+        use super::super::middleware::TokenByCreditConfig;
+        let mut ctx = StreamContext::new_with_thinking(
+            "claude-3-5-sonnet-20241022",
+            1000,
+            false,
+            HashMap::new(),
+            test_known_tools(),
+        )
+        .with_token_by_credit(
+            Some(TokenByCreditConfig {
+                enabled: true,
+                credit_price: 0.002,
+                simulated_cache_enabled: false,
+                simulated_cache_ratio: 0.8,
+            }),
+            None, // uses fallback pricing: input 3.0, output 15.0 per 1M
+        );
+        ctx.output_tokens = 500;
+        ctx.credits = 1.0; // 1 credit = $0.002
+
+        let (input, output, creation, read) = ctx.resolved_adjusted_usage();
+        assert_eq!(creation, 0);
+        assert_eq!(read, 0);
+        // Cost should equal 1.0 * 0.002 = 0.002 USD
+        let total_cost = (input as f64 * 3.0 + output as f64 * 15.0) / 1_000_000.0;
+        assert!((total_cost - 0.002).abs() < 1e-5);
+    }
 }
+

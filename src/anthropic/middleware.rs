@@ -19,6 +19,26 @@ use crate::kiro::provider::KiroProvider;
 use super::cache_metering::SharedCacheMeter;
 use super::types::ErrorResponse;
 
+/// 按积分返回 Token 的生效配置
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TokenByCreditConfig {
+    pub enabled: bool,
+    pub credit_price: f64,
+    pub simulated_cache_enabled: bool,
+    pub simulated_cache_ratio: f64,
+}
+
+impl Default for TokenByCreditConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            credit_price: 0.002,
+            simulated_cache_enabled: false,
+            simulated_cache_ratio: 0.8,
+        }
+    }
+}
+
 /// 命中的鉴权上下文（注入到请求扩展，供 handler 记录用量）
 #[derive(Clone, Debug)]
 pub struct KeyContext {
@@ -30,6 +50,8 @@ pub struct KeyContext {
     pub key_source: TraceKeySource,
     /// 客户端 IP（转发头优先，回落到 TCP 对端），仅用于请求日志
     pub client_ip: Option<String>,
+    /// 按积分返回 Token 的生效配置
+    pub token_by_credit: TokenByCreditConfig,
 }
 
 /// 应用共享状态
@@ -52,6 +74,12 @@ pub struct AppState {
     pub cache_meter: Option<SharedCacheMeter>,
     /// 请求链路追踪存储（SQLite，可选）
     pub trace_store: Option<SharedTraceStore>,
+    /// 模型定价管理器
+    pub pricing_manager: Option<crate::model::pricing::SharedPricingManager>,
+    /// 账号分组管理器
+    pub group_manager: Option<crate::admin::groups::SharedGroupManager>,
+    /// 全局按积分返回 Token 共享状态
+    pub token_by_credit: Option<crate::model::pricing::SharedTokenByCredit>,
 }
 
 impl AppState {
@@ -70,6 +98,9 @@ impl AppState {
             usage_aggregator: None,
             cache_meter: None,
             trace_store: None,
+            pricing_manager: None,
+            group_manager: None,
+            token_by_credit: None,
         }
     }
 
@@ -103,6 +134,19 @@ impl AppState {
         self.trace_store = store;
         self
     }
+
+    /// 注入定价与分组配置
+    pub fn with_pricing(
+        mut self,
+        pricing: Option<crate::model::pricing::SharedPricingManager>,
+        token_by_credit: Option<crate::model::pricing::SharedTokenByCredit>,
+        group_manager: Option<crate::admin::groups::SharedGroupManager>,
+    ) -> Self {
+        self.pricing_manager = pricing;
+        self.token_by_credit = token_by_credit;
+        self.group_manager = group_manager;
+        self
+    }
 }
 
 /// API Key 认证中间件
@@ -125,13 +169,45 @@ pub async fn auth_middleware(
     if let Some(mgr) = &state.client_keys {
         match mgr.verify_and_touch_ex(&presented) {
             KeyAuth::Ok(id) => {
-                let group = mgr.group_of(id);
+                let client_key = mgr.get(id);
+                let group = client_key.as_ref().and_then(|k| k.group.clone()).or_else(|| mgr.group_of(id));
+                let group_obj = group
+                    .as_ref()
+                    .and_then(|g| state.group_manager.as_ref().and_then(|gm| gm.get(g)));
+
+                let global_tbc = state
+                    .token_by_credit
+                    .as_ref()
+                    .map(|s| s.read().clone())
+                    .unwrap_or_default();
+
+                // 继承决策：账号设置 > 分组设置 > 全局配置
+                let token_by_credit_enabled = client_key
+                    .as_ref()
+                    .and_then(|k| k.token_by_credit_enabled)
+                    .or_else(|| group_obj.as_ref().and_then(|g| g.token_by_credit_enabled))
+                    .unwrap_or(global_tbc.enabled);
+
+                let credit_price = client_key
+                    .as_ref()
+                    .and_then(|k| k.credit_price)
+                    .or_else(|| group_obj.as_ref().and_then(|g| g.credit_price))
+                    .unwrap_or(global_tbc.credit_price);
+
+                let token_by_credit = TokenByCreditConfig {
+                    enabled: token_by_credit_enabled,
+                    credit_price,
+                    simulated_cache_enabled: global_tbc.simulated_cache_enabled,
+                    simulated_cache_ratio: global_tbc.simulated_cache_ratio,
+                };
+
                 let client_ip = auth::extract_client_ip(&request);
                 request.extensions_mut().insert(KeyContext {
                     key_id: id,
                     group,
                     key_source: TraceKeySource::ClientKey,
                     client_ip,
+                    token_by_credit,
                 });
                 return next.run(request).await;
             }

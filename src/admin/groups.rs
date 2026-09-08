@@ -26,6 +26,12 @@ pub struct Group {
     pub description: Option<String>,
     /// 创建时间（ISO8601）
     pub created_at: String,
+    /// 是否开启按积分返回 Token（None 表示继承全局配置）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_by_credit_enabled: Option<bool>,
+    /// 该分组 1 积分对应的金额（None 表示继承全局配置）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credit_price: Option<f64>,
 }
 
 /// 分组管理器（线程安全 + 自动持久化）
@@ -120,8 +126,14 @@ impl GroupManager {
             .collect()
     }
 
-    /// 创建分组。重名直接报错，不会静默覆盖（避免误创建丢备注）
-    pub fn create(&self, name: String, description: Option<String>) -> anyhow::Result<Group> {
+    /// 创建分组（支持指定积分配置）。重名直接报错，不会静默覆盖（避免误创建丢备注）
+    pub fn create_with_pricing(
+        &self,
+        name: String,
+        description: Option<String>,
+        token_by_credit_enabled: Option<bool>,
+        credit_price: Option<f64>,
+    ) -> anyhow::Result<Group> {
         let trimmed = name.trim();
         if trimmed.is_empty() {
             anyhow::bail!("分组名不能为空");
@@ -137,10 +149,47 @@ impl GroupManager {
             name: trimmed.to_string(),
             description: description.map(|d| d.trim().to_string()).filter(|d| !d.is_empty()),
             created_at: Utc::now().to_rfc3339(),
+            token_by_credit_enabled,
+            credit_price,
         };
         inner.entries.insert(group.name.clone(), group.clone());
         self.save_locked(&inner);
         Ok(group)
+    }
+
+    /// 创建分组。重名直接报错，不会静默覆盖（避免误创建丢备注）
+    #[allow(dead_code)]
+    pub fn create(&self, name: String, description: Option<String>) -> anyhow::Result<Group> {
+        self.create_with_pricing(name, description, None, None)
+    }
+
+    /// 更新积分返回 Token 配置
+    pub fn update_token_by_credit(
+        &self,
+        name: &str,
+        token_by_credit_enabled: Option<bool>,
+        reset_enabled: bool,
+        credit_price: Option<f64>,
+        reset_price: bool,
+    ) -> anyhow::Result<Group> {
+        let mut inner = self.inner.write();
+        let entry = inner
+            .entries
+            .get_mut(name)
+            .ok_or_else(|| anyhow::anyhow!("分组不存在: {}", name))?;
+        if reset_enabled {
+            entry.token_by_credit_enabled = None;
+        } else if token_by_credit_enabled.is_some() {
+            entry.token_by_credit_enabled = token_by_credit_enabled;
+        }
+        if reset_price {
+            entry.credit_price = None;
+        } else if credit_price.is_some() {
+            entry.credit_price = credit_price;
+        }
+        let cloned = entry.clone();
+        self.save_locked(&inner);
+        Ok(cloned)
     }
 
     /// 更新备注（不改名字）
@@ -217,6 +266,8 @@ impl GroupManager {
                         name: trimmed.to_string(),
                         description: None,
                         created_at: now.clone(),
+                        token_by_credit_enabled: None,
+                        credit_price: None,
                     },
                 );
                 added += 1;

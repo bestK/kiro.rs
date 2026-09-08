@@ -119,13 +119,13 @@ export function FloatingSectionNav({ items, className }: FloatingSectionNavProps
               {item.title}
             </div>
 
-            {/* 默认为横线 */}
+            {/* 默认为横线 (固定长度，不发生长度伸缩变化) */}
             <div
               className={cn(
-                'rounded-full transition-all duration-300 ease-out',
+                'w-5 h-[2.5px] rounded-full transition-colors duration-200 ease-out',
                 isActive
-                  ? 'h-[3.5px] w-7 bg-primary shadow-xs shadow-primary/30'
-                  : 'h-[2.5px] w-4 bg-muted-foreground/35 group-hover:w-6 group-hover:bg-foreground/80'
+                  ? 'bg-primary shadow-xs shadow-primary/40'
+                  : 'bg-muted-foreground/35 group-hover:bg-foreground/85'
               )}
             />
           </button>

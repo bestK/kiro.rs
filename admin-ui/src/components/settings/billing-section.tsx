@@ -618,38 +618,6 @@ function DownstreamVerifier({
                 </div>
               )}
             </div>
-
-            {/* 常用快捷模型 */}
-            <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
-              <span className="text-[10px] text-muted-foreground">快捷填入:</span>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                className="h-6 px-1.5 text-[10px] font-mono"
-                onClick={() => setModel('claude-sonnet-5')}
-              >
-                Sonnet 5
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                className="h-6 px-1.5 text-[10px] font-mono"
-                onClick={() => setModel('claude-3-7-sonnet-20250219')}
-              >
-                Sonnet 3.7
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                className="h-6 px-1.5 text-[10px] font-mono"
-                onClick={() => setModel('claude-3-5-haiku-20241022')}
-              >
-                Haiku 3.5
-              </Button>
-            </div>
           </div>
 
           <div className="space-y-1">

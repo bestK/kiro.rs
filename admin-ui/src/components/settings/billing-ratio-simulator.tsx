@@ -11,6 +11,7 @@ import {
   ShieldCheck,
   FileText,
   Sliders,
+  AlertCircle,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -180,6 +181,32 @@ ${POPULAR_MODELS.map((m) => {
 
   return (
     <div className="space-y-4">
+      {/* ⚠️ 核心声明提示：告知用户此模块仅为对外话术文案与价格换算预览，不影响 Kiro 运行时 Token 计算 */}
+      <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3.5 space-y-2 text-xs">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0" />
+            <span className="font-semibold text-amber-800 dark:text-amber-300">
+              声明提示：本模块仅用于对外宣传话术文案与下游价格预览
+            </span>
+          </div>
+          <Badge variant="outline" className="text-[10px] text-amber-700 dark:text-amber-300 border-amber-500/40 bg-amber-500/10">
+            仅作沟通文案 · 不参与 Token 折算
+          </Badge>
+        </div>
+        <p className="text-[11px] text-amber-900/80 dark:text-amber-200/80 leading-relaxed">
+          此处选择或输入的倍率（如 <strong className="font-mono">0.13x</strong>）<strong>仅作为面向终端客户宣传的话术口径与价格换算参考</strong>，<strong>绝不会直接修改或参与 Kiro 运行时向外部返回的实际 Token 数量模拟</strong>。
+        </p>
+        <div className="text-[11px] text-muted-foreground pt-0.5 space-y-0.5 border-t border-amber-500/20">
+          <div>
+            • <strong>Kiro 真实的 Token 模拟计算</strong>：始终由上方表单的<strong>「基准千分单价」</strong>（将账号实际消耗的积分折算为等价官方 Token）与「模拟缓存命中率」决定。
+          </div>
+          <div>
+            • <strong>倍率（如 0.13x）的真正扣费生效处</strong>：是在下游平台（如 New API 的分组管理中，将分组倍率设置为 0.13）扣除终端用户钱包配额时生效。
+          </div>
+        </div>
+      </div>
+
       {/* 1. 概念对照与口径打通说明卡片 */}
       <div className="rounded-lg border border-border/60 bg-muted/20 p-4 space-y-3">
         <div className="flex items-center gap-2">

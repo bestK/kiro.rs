@@ -23,6 +23,7 @@ import {
   RefreshCw,
   Search,
   TrendingUp,
+  Tag,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -47,6 +48,7 @@ import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import type { VerifyBillingResponse } from '@/types/api'
 import { ProfitCalculator } from '@/components/settings/profit-calculator'
+import { BillingRatioSimulator } from '@/components/settings/billing-ratio-simulator'
 
 /**
  * 专属基准价格设置行：支持按「每千分单价 (USD / 千分)」与「单积分价格 (USD / 积分)」两种视角无缝切换与修改。
@@ -1150,6 +1152,17 @@ export function BillingSection() {
               当前全局基准：{enabled ? `已启用 ($${+(creditPrice * 1000).toFixed(4)}/千分 · $${creditPrice}/分)` : '未启用'}
             </div>
           </div>
+        </div>
+      </SettingGroup>
+
+      {/* 下游官方价格倍率模拟与对外口径 */}
+      <SettingGroup
+        title="下游计费口径与官方倍率模拟"
+        description="面向下游开发者与终端客户最习惯的「官方标准价格 × XX 倍率」口径。实时换算各模型实收单价并一键生成对外公告文案。"
+        icon={<Tag className="h-4 w-4" />}
+      >
+        <div className="py-2">
+          <BillingRatioSimulator currentCreditPrice={creditPrice} />
         </div>
       </SettingGroup>
 

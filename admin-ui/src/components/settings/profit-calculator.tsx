@@ -712,9 +712,14 @@ export function ProfitCalculator({ currentCreditPrice }: ProfitCalculatorProps) 
                 {calcResult.group}
               </Badge>
               {calcResult.groupRatio !== undefined && calcResult.groupRatio !== null && (
-                <Badge variant="secondary" className="font-mono text-[11px]">
-                  下游分组倍率: {calcResult.groupRatio}x
-                </Badge>
+                <div className="flex items-center gap-1.5">
+                  <Badge variant="secondary" className="font-mono text-[11px]">
+                    下游分组倍率: {calcResult.groupRatio}x
+                  </Badge>
+                  <Badge variant="outline" className="text-[10px] text-emerald-600 dark:text-emerald-400 border-emerald-500/30 bg-emerald-500/5">
+                    相当于官方 {(calcResult.groupRatio * 10).toFixed(1)} 折 (省 {Math.max(0, Math.round((1 - calcResult.groupRatio) * 100))}%)
+                  </Badge>
+                </div>
               )}
               <span className="text-xs text-muted-foreground">
                 统计周期：

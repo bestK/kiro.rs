@@ -17,10 +17,8 @@ export default defineConfig({
     proxy: {
       '/api': {
         // 默认本地后端。要打线上：
-        //   KIRO_API_TARGET=https://your-domain.com bun run dev
-        // 线上域名在 Cloudflare 后面，TLS 握手缺 SNI 会被直接断连
-        // （"Client network socket disconnected before secure TLS connection"），
-        // http-proxy 不会自动从 target 推导 servername，所以显式给出。
+        //   KIRO_API_TARGET=https://kiro.linkof.link bun run dev
+        // 线上域名在 Cloudflare 后面，显式指定 servername 保证 TLS SNI 握手成功
         target: process.env.KIRO_API_TARGET || 'http://localhost:8080',
         changeOrigin: true,
         secure: true,

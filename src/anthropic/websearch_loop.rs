@@ -468,6 +468,7 @@ async fn run_round(
         }
     };
     let credential_id = call_result.credential_id;
+    let _in_flight = call_result._in_flight;
     let mut outcome = decode_round(
         call_result.response,
         &payload.model,

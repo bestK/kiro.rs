@@ -643,6 +643,7 @@ impl AdminService {
         token_manager: Arc<MultiTokenManager>,
         known_endpoints: impl IntoIterator<Item = String>,
     ) -> Self {
+        token_manager.bind_self_ref();
         let cache_path = token_manager
             .cache_dir()
             .map(|d| d.join("kiro_balance_cache.json"));

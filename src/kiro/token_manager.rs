@@ -13,7 +13,7 @@ use tokio::sync::{Mutex as TokioMutex, Semaphore};
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::time::{Duration as StdDuration, Instant};
 
@@ -951,6 +951,8 @@ struct CredentialEntry {
     last_self_heal_at: Option<DateTime<Utc>>,
     /// 当前连续自愈轮次对应的模型；None 表示 MCP/无模型请求。
     self_heal_model: Option<String>,
+    /// 当前在途处理中的请求数（用于负载均衡并发避让）
+    in_flight: Arc<AtomicU32>,
 }
 
 impl CredentialEntry {
@@ -963,6 +965,7 @@ impl CredentialEntry {
         self.disabled_reason = None;
         self.throttled_until = None;
         self.rpm_window.clear();
+        self.in_flight.store(0, Ordering::Relaxed);
         self.clear_self_heal_streak();
     }
 }
@@ -1227,6 +1230,8 @@ pub struct MultiTokenManager {
     model_cache_generations: Mutex<HashMap<u64, u64>>,
     /// 全局代理变化时递增，阻止所有在途旧请求回填缓存。
     model_cache_epoch: AtomicU64,
+    /// 对自身的弱引用，供内部后台任务异步刷新缓存使用
+    weak_self: Mutex<Option<Weak<MultiTokenManager>>>,
 }
 
 /// 每个凭据最大 API 调用失败次数
@@ -1236,6 +1241,28 @@ const MAX_FAILURES_PER_CREDENTIAL: u32 = 3;
 const RPM_WINDOW_SECS: u64 = 60;
 /// 统计数据持久化防抖间隔
 const STATS_SAVE_DEBOUNCE: StdDuration = StdDuration::from_secs(30);
+
+/// 在途请求引用计数守卫
+///
+/// 当凭据被调度选中发起请求时持有该守卫，Drop 时自动递减 `in_flight` 并发计数。
+/// 配合 `Arc<InFlightGuard>` 放入 `CallContext` 内，可在多次克隆时共享同一生命周期，
+/// 直到该次请求的所有上下文副本均被释放（包括流式响应全部 chunk 发送完毕）。
+pub struct InFlightGuard {
+    counter: Arc<AtomicU32>,
+}
+
+impl InFlightGuard {
+    pub fn new(counter: Arc<AtomicU32>) -> Self {
+        counter.fetch_add(1, Ordering::Relaxed);
+        Self { counter }
+    }
+}
+
+impl Drop for InFlightGuard {
+    fn drop(&mut self) {
+        self.counter.fetch_sub(1, Ordering::Relaxed);
+    }
+}
 
 /// API 调用上下文
 ///
@@ -1249,6 +1276,8 @@ pub struct CallContext {
     pub credentials: KiroCredentials,
     /// 访问 Token
     pub token: String,
+    /// 在途请求守卫（Drop 时自动递减凭据的 in_flight 并发计数）
+    pub _in_flight: Option<Arc<InFlightGuard>>,
 }
 
 pub struct IdcReloginCredentials {
@@ -1380,6 +1409,7 @@ impl MultiTokenManager {
                     self_heal_total_count: cred.self_heal_total_count,
                     last_self_heal_at,
                     self_heal_model: cred.self_heal_model.clone(),
+                    in_flight: Arc::new(AtomicU32::new(0)),
                 }
             })
             .collect();
@@ -1466,6 +1496,7 @@ impl MultiTokenManager {
             model_refresh_semaphore: Semaphore::new(4),
             model_cache_generations: Mutex::new(HashMap::new()),
             model_cache_epoch: AtomicU64::new(0),
+            weak_self: Mutex::new(None),
         };
 
         // 单凭据格式自动迁移：升级为数组格式，确保 token rotation 能写盘
@@ -1737,8 +1768,40 @@ impl MultiTokenManager {
         }
     }
 
+    /// 绑定 self 的弱引用，供内部后台任务异步刷新缓存使用
+    pub fn bind_self_ref(self: &Arc<Self>) {
+        *self.weak_self.lock() = Some(Arc::downgrade(self));
+    }
+
+    /// 异步触发凭据的模型缓存刷新
+    pub fn spawn_model_cache_refresh(&self, id: u64) {
+        if let Some(arc) = self.weak_self.lock().as_ref().and_then(|w| w.upgrade()) {
+            tokio::spawn(async move {
+                let _ = arc.cached_or_refresh_models_for(id).await;
+            });
+        }
+    }
+
+    /// 获取指定凭据的在途并发计数
+    #[allow(dead_code)]
+    pub fn get_in_flight(&self, id: u64) -> u32 {
+        let entries = self.entries.lock();
+        entries
+            .iter()
+            .find(|e| e.id == id)
+            .map(|e| e.in_flight.load(Ordering::Relaxed))
+            .unwrap_or(0)
+    }
+
+    fn acquire_in_flight_guard(&self, id: u64) -> Option<InFlightGuard> {
+        let entries = self.entries.lock();
+        let entry = entries.iter().find(|e| e.id == id)?;
+        Some(InFlightGuard::new(Arc::clone(&entry.in_flight)))
+    }
+
     /// 服务启动后异步预热所有当前启用凭据的模型缓存。
     pub fn start_model_cache_warmer(self: &Arc<Self>) {
+        self.bind_self_ref();
         let manager = Arc::clone(self);
         tokio::spawn(async move {
             match manager.discover_models_for_group(None).await {
@@ -1960,17 +2023,23 @@ impl MultiTokenManager {
 
         match mode {
             "balanced" => {
-                // Least-Used 策略：选择成功次数最少的凭据
-                // 平局时按优先级排序（数字越小优先级越高）
-                let (entry, _) = available.iter().min_by_key(|(e, support)| {
+                // Least-Used 策略：优先选择在途并发最少、累计成功次数最少的凭据
+                // 平局时优先选择已确认支持该模型的凭据与高优先级凭据
+                let (entry, support) = available.iter().min_by_key(|(e, support)| {
+                    let in_flight = e.in_flight.load(Ordering::Relaxed);
                     let discovery_rank = usize::from(*support != CachedModelSupport::Confirmed);
                     (
-                        discovery_rank,
+                        in_flight,
                         e.success_count,
+                        discovery_rank,
                         e.credentials.priority,
                         e.id,
                     )
                 })?;
+
+                if *support == CachedModelSupport::Unknown && model.is_some() {
+                    self.spawn_model_cache_refresh(entry.id);
+                }
 
                 Some((entry.id, entry.credentials.clone()))
             }
@@ -2147,11 +2216,16 @@ impl MultiTokenManager {
 
             // 尝试获取/刷新 Token
             match self.try_ensure_token(id, &credentials).await {
-                Ok(ctx) => {
+                Ok(mut ctx) => {
                     // 仅真实业务请求计入 RPM 窗口；Admin 只读模型发现不消耗额度。
                     if update_current && !self.record_request(id) {
                         // Token 获取期间额度可能被其它并发请求抢先占用；重新选号。
                         continue;
+                    }
+                    if update_current {
+                        if let Some(guard) = self.acquire_in_flight_guard(id) {
+                            ctx._in_flight = Some(Arc::new(guard));
+                        }
                     }
                     return Ok((ctx, is_balanced, route));
                 }
@@ -2244,6 +2318,7 @@ impl MultiTokenManager {
                 id,
                 credentials: credentials.clone(),
                 token,
+                _in_flight: None,
             });
         }
 
@@ -2314,6 +2389,7 @@ impl MultiTokenManager {
             id,
             credentials: creds,
             token,
+            _in_flight: None,
         })
     }
 
@@ -3984,6 +4060,7 @@ impl MultiTokenManager {
                 self_heal_total_count: 0,
                 last_self_heal_at: None,
                 self_heal_model: None,
+                in_flight: Arc::new(AtomicU32::new(0)),
             });
         }
 
@@ -3995,6 +4072,9 @@ impl MultiTokenManager {
         // 6. 升级为多凭据格式（确保后续 token rotation 能写盘）并持久化
         self.is_multiple_format.store(true, Ordering::Relaxed);
         self.persist_credentials()?;
+
+        // 7. 异步预热新凭据的模型列表
+        self.spawn_model_cache_refresh(new_id);
 
         tracing::info!("成功添加凭据 #{}", new_id);
         Ok(new_id)
@@ -7457,5 +7537,105 @@ mod tests {
 
         // 但 g2 仍可用
         assert!(manager.acquire_context(None, Some("g2")).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_balanced_mode_avoids_in_flight_busy_credential() {
+        let mut config = Config::default();
+        config.load_balancing_mode = "balanced".to_string();
+
+        let mut first = KiroCredentials::default();
+        first.access_token = Some("first-token".to_string());
+        first.expires_at = Some((Utc::now() + Duration::hours(1)).to_rfc3339());
+        first.priority = 0;
+
+        let mut second = KiroCredentials::default();
+        second.access_token = Some("second-token".to_string());
+        second.expires_at = Some((Utc::now() + Duration::hours(1)).to_rfc3339());
+        second.priority = 0;
+
+        let manager = MultiTokenManager::new(
+            config,
+            vec![first, second],
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(manager.get_in_flight(1), 0);
+        assert_eq!(manager.get_in_flight(2), 0);
+
+        // 获取第一个请求的上下文，凭据 #1 被选中并在途处理
+        let ctx1 = manager.acquire_context(None, None).await.unwrap();
+        assert_eq!(ctx1.id, 1);
+        assert_eq!(manager.get_in_flight(1), 1);
+        assert_eq!(manager.get_in_flight(2), 0);
+
+        // 并发第二个请求到达：虽然凭据 #1 success_count 均为 0，但因为 #1 在途并发为 1，
+        // 调度器应避让并选择空闲的凭据 #2
+        let ctx2 = manager.acquire_context(None, None).await.unwrap();
+        assert_eq!(ctx2.id, 2);
+        assert_eq!(manager.get_in_flight(1), 1);
+        assert_eq!(manager.get_in_flight(2), 1);
+
+        // 克隆 ctx1（模拟流式传输处理）：在途计数不应重复递增
+        let ctx1_clone = ctx1.clone();
+        assert_eq!(manager.get_in_flight(1), 1);
+
+        // 释放 ctx1 主体，但仍持有 ctx1_clone：在途计数仍为 1
+        drop(ctx1);
+        assert_eq!(manager.get_in_flight(1), 1);
+
+        // 释放 ctx1_clone：在途计数归 0
+        drop(ctx1_clone);
+        assert_eq!(manager.get_in_flight(1), 0);
+
+        // 释放 ctx2：在途计数归 0
+        drop(ctx2);
+        assert_eq!(manager.get_in_flight(2), 0);
+    }
+
+    #[test]
+    fn test_balanced_mode_does_not_starve_unknown_model_support() {
+        let mut config = Config::default();
+        config.load_balancing_mode = "balanced".to_string();
+
+        let mut first = KiroCredentials::default();
+        first.id = Some(1);
+        first.access_token = Some("token-1".to_string());
+        first.expires_at = Some((Utc::now() + Duration::hours(1)).to_rfc3339());
+        first.priority = 0;
+
+        let mut second = KiroCredentials::default();
+        second.id = Some(2);
+        second.access_token = Some("token-2".to_string());
+        second.expires_at = Some((Utc::now() + Duration::hours(1)).to_rfc3339());
+        second.priority = 0;
+
+        let manager = MultiTokenManager::new(
+            config,
+            vec![first, second],
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+
+        // 模拟凭据 #1 已确认支持模型，但已有 5 次成功调用
+        seed_model_cache(&manager, 1, &["claude-3-7-sonnet"]);
+        for _ in 0..5 {
+            manager.report_success(1);
+        }
+
+        // 凭据 #2 未预热（Unknown），但成功调用为 0
+        // 旧策略：discovery_rank 优先，导致 #2 永远无法被选中（饥饿）
+        // 新策略：优先按在途与 success_count 负载均衡，#2 应被优先调度
+        let pick = manager.select_next_credential(Some("claude-3-7-sonnet"), None);
+        assert_eq!(
+            pick.map(|(id, _)| id),
+            Some(2),
+            "balanced 模式下新导入或未预热凭据应参与调度，不应被饿死"
+        );
     }
 }

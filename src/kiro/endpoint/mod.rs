@@ -70,6 +70,14 @@ pub trait KiroEndpoint: Send + Sync {
         default_is_account_throttled(body)
     }
 
+    /// 判断响应体是否表示"账号级频控超限"（429 + USER_REQUEST_RATE_EXCEEDED 等）
+    ///
+    /// 上游单账号瞬时请求过多触发速率限制时返回，通过对该凭据进行短暂冷却并故障转移，
+    /// 可由其他可用账号继续承接流量。
+    fn is_account_rate_limited(&self, body: &str) -> bool {
+        default_is_account_rate_limited(body)
+    }
+
     /// 判断响应体是否表示"客户端请求格式错误"（messages 数组本身违反协议）
     ///
     /// 这类错误（tool_use↔tool_result 不配对、消息序列非法等）的根因是调用方的
@@ -162,6 +170,17 @@ pub fn default_is_bearer_token_invalid(body: &str) -> bool {
 pub fn default_is_account_throttled(body: &str) -> bool {
     body.contains("suspicious activity")
         && body.contains("temporary limits")
+}
+
+/// 默认的账号级频控超限判断逻辑 (429 Rate Limit)
+///
+/// 上游 Kiro / AWS 在单账号瞬时请求过多或并发过高时返回 429 并伴随：
+/// `USER_REQUEST_RATE_EXCEEDED`、`SERVICE_REQUEST_RATE_EXCEEDED`、`REQUEST_RATE_EXCEEDED` 或 `ThrottlingException`。
+/// 这属于单账号维度的限流，针对该凭据设置短暂冷却（如 30 秒）并立即故障转移到其他可用凭据。
+pub fn default_is_account_rate_limited(body: &str) -> bool {
+    let upper = body.to_ascii_uppercase();
+    upper.contains("REQUEST_RATE_EXCEEDED")
+        || upper.contains("THROTTLINGEXCEPTION")
 }
 
 /// 默认的"账号被封禁/停用"判断逻辑
@@ -364,5 +383,17 @@ mod tests {
         assert!(!default_is_client_validation_error(
             r#"{"__type":"ValidationException","message":"some other validation"}"#
         ));
+    }
+
+    #[test]
+    fn test_default_account_rate_limited() {
+        let body1 = r#"{"message":"Too Many Requests: USER_REQUEST_RATE_EXCEEDED"}"#;
+        assert!(default_is_account_rate_limited(body1));
+        let body2 = r#"{"message":"SERVICE_REQUEST_RATE_EXCEEDED"}"#;
+        assert!(default_is_account_rate_limited(body2));
+        let body3 = r#"{"__type":"ThrottlingException","message":"Rate exceeded"}"#;
+        assert!(default_is_account_rate_limited(body3));
+        let body4 = r#"{"message":"Internal Server Error"}"#;
+        assert!(!default_is_account_rate_limited(body4));
     }
 }

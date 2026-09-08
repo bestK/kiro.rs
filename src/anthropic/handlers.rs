@@ -942,6 +942,7 @@ async fn handle_stream_request(
     };
     let response = call_result.response;
     let credential_id = call_result.credential_id;
+    let in_flight = call_result._in_flight;
 
     // 创建流处理上下文
     let mut ctx = StreamContext::new_with_thinking(
@@ -958,7 +959,7 @@ async fn handle_stream_request(
     let initial_events = ctx.generate_initial_events();
 
     // 创建 SSE 流
-    let stream = create_sse_stream(response, ctx, initial_events, hook, credential_id, tracer);
+    let stream = create_sse_stream(response, ctx, initial_events, hook, credential_id, tracer, in_flight);
 
     // 返回 SSE 响应
     Response::builder()
@@ -986,6 +987,7 @@ fn create_sse_stream(
     hook: UsageRecordHook,
     credential_id: u64,
     tracer: std::sync::Arc<RequestTracer>,
+    in_flight: Option<std::sync::Arc<crate::kiro::token_manager::InFlightGuard>>,
 ) -> impl Stream<Item = Result<Bytes, Infallible>> {
     // 先发送初始事件
     let initial_stream = stream::iter(
@@ -996,7 +998,7 @@ fn create_sse_stream(
 
     // 然后处理 Kiro 响应流，同时每25秒发送 ping 保活
     let body_stream = response.bytes_stream();
-    let settlement = StreamSettlement::new(hook, credential_id, tracer, &ctx);
+    let settlement = StreamSettlement::new(hook, credential_id, tracer, &ctx, in_flight);
 
     let processing_stream = stream::unfold(
         (body_stream, ctx, EventStreamDecoder::new(), false, interval(Duration::from_secs(PING_INTERVAL_SECS)), settlement, 0u64),
@@ -1118,6 +1120,7 @@ struct StreamSettlement {
     usage: TraceUsage,
     sent_bytes: u64,
     settled: bool,
+    _in_flight: Option<std::sync::Arc<crate::kiro::token_manager::InFlightGuard>>,
 }
 
 impl StreamSettlement {
@@ -1126,6 +1129,7 @@ impl StreamSettlement {
         credential_id: u64,
         tracer: std::sync::Arc<RequestTracer>,
         ctx: &StreamContext,
+        in_flight: Option<std::sync::Arc<crate::kiro::token_manager::InFlightGuard>>,
     ) -> Self {
         Self {
             hook,
@@ -1134,6 +1138,7 @@ impl StreamSettlement {
             usage: stream_trace_usage(ctx),
             sent_bytes: 0,
             settled: false,
+            _in_flight: in_flight,
         }
     }
 
@@ -1963,6 +1968,7 @@ async fn handle_stream_request_buffered(
     };
     let response = call_result.response;
     let credential_id = call_result.credential_id;
+    let in_flight = call_result._in_flight;
 
     // 创建缓冲流处理上下文
     let mut ctx = BufferedStreamContext::new(
@@ -1976,7 +1982,7 @@ async fn handle_stream_request_buffered(
     ctx.set_cache_usage(cache_usage);
 
     // 创建缓冲 SSE 流
-    let stream = create_buffered_sse_stream(response, ctx, hook, credential_id, tracer);
+    let stream = create_buffered_sse_stream(response, ctx, hook, credential_id, tracer, in_flight);
 
     // 返回 SSE 响应
     Response::builder()
@@ -2001,6 +2007,7 @@ fn create_buffered_sse_stream(
     hook: UsageRecordHook,
     credential_id: u64,
     tracer: std::sync::Arc<RequestTracer>,
+    in_flight: Option<std::sync::Arc<crate::kiro::token_manager::InFlightGuard>>,
 ) -> impl Stream<Item = Result<Bytes, Infallible>> {
     let body_stream = response.bytes_stream();
 
@@ -2015,8 +2022,9 @@ fn create_buffered_sse_stream(
             credential_id,
             tracer,
             0u64,
+            in_flight,
         ),
-        |(mut body_stream, mut ctx, mut decoder, finished, mut ping_interval, hook, credential_id, tracer, mut sent_bytes)| async move {
+        |(mut body_stream, mut ctx, mut decoder, finished, mut ping_interval, hook, credential_id, tracer, mut sent_bytes, in_flight)| async move {
             if finished {
                 return None;
             }
@@ -2031,7 +2039,7 @@ fn create_buffered_sse_stream(
                     _ = ping_interval.tick() => {
                         tracing::trace!("发送 ping 保活事件（缓冲模式）");
                         let bytes: Vec<Result<Bytes, Infallible>> = vec![Ok(create_ping_sse())];
-                        return Some((stream::iter(bytes), (body_stream, ctx, decoder, false, ping_interval, hook, credential_id, tracer, sent_bytes)));
+                        return Some((stream::iter(bytes), (body_stream, ctx, decoder, false, ping_interval, hook, credential_id, tracer, sent_bytes, in_flight)));
                     }
 
                     // 然后处理数据流
@@ -2085,7 +2093,7 @@ fn create_buffered_sse_stream(
                                     .into_iter()
                                     .map(|e| Ok(Bytes::from(e.to_sse_string())))
                                     .collect();
-                                return Some((stream::iter(bytes), (body_stream, ctx, decoder, true, ping_interval, hook, credential_id, tracer, sent_bytes)));
+                                return Some((stream::iter(bytes), (body_stream, ctx, decoder, true, ping_interval, hook, credential_id, tracer, sent_bytes, in_flight)));
                             }
                             None => {
                                 // 流结束，完成处理并返回所有事件（已更正 input_tokens）。
@@ -2118,7 +2126,7 @@ fn create_buffered_sse_stream(
                                     .into_iter()
                                     .map(|e| Ok(Bytes::from(e.to_sse_string())))
                                     .collect();
-                                return Some((stream::iter(bytes), (body_stream, ctx, decoder, true, ping_interval, hook, credential_id, tracer, sent_bytes)));
+                                return Some((stream::iter(bytes), (body_stream, ctx, decoder, true, ping_interval, hook, credential_id, tracer, sent_bytes, in_flight)));
                             }
                         }
                     }
@@ -2167,7 +2175,7 @@ mod tests {
         ctx.output_tokens = 7;
         ctx.credits = 0.5;
 
-        let mut settlement = StreamSettlement::new(hook, 42, tracer, &ctx);
+        let mut settlement = StreamSettlement::new(hook, 42, tracer, &ctx, None);
         settlement.update(&ctx, 123);
         drop(settlement);
 

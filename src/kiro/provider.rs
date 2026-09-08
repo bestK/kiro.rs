@@ -17,7 +17,7 @@ use crate::kiro::endpoint::{KiroEndpoint, RequestContext};
 use crate::kiro::error::UpstreamRateLimitError;
 use crate::kiro::machine_id;
 use crate::kiro::model::credentials::KiroCredentials;
-use crate::kiro::token_manager::MultiTokenManager;
+use crate::kiro::token_manager::{InFlightGuard, MultiTokenManager};
 use crate::model::config::TlsBackend;
 use parking_lot::Mutex;
 
@@ -87,6 +87,7 @@ impl ClientCache {
 pub struct KiroCallResult {
     pub response: reqwest::Response,
     pub credential_id: u64,
+    pub _in_flight: Option<Arc<InFlightGuard>>,
 }
 
 /// A successful MCP HTTP response whose trace attempt is finalized after body validation.
@@ -628,6 +629,55 @@ impl KiroProvider {
                 continue;
             }
 
+            // 429: 账号级临时风控 (suspicious activity) 或 账号级频控超限 (USER_REQUEST_RATE_EXCEEDED 等)
+            let is_throttled = endpoint.is_account_throttled(&body);
+            let is_rate_limited = endpoint.is_account_rate_limited(&body);
+            if status.as_u16() == 429
+                && self.token_manager.get_account_throttle_failover()
+                && (is_throttled || is_rate_limited)
+            {
+                let cooldown_secs = if is_throttled {
+                    self.token_manager
+                        .get_account_throttle_cooldown_secs()
+                        .max(1)
+                } else {
+                    30u64
+                };
+                let cooldown = std::time::Duration::from_secs(cooldown_secs);
+                let reason_label = if is_throttled { "账号级风控" } else { "账号级频控超限" };
+                tracing::warn!(
+                    "MCP 请求失败（{}，凭据 #{} 冷却 {}s 并切换，尝试 {}/{}）: {}",
+                    reason_label,
+                    ctx.id,
+                    cooldown_secs,
+                    attempt + 1,
+                    max_retries,
+                    body
+                );
+                let remaining = self.token_manager.report_account_throttled_for_request(
+                    ctx.id,
+                    cooldown,
+                    None,
+                    group,
+                );
+                Self::emit_attempt(
+                    sink, attempt, ctx.id, endpoint_name, Some(429),
+                    outcome::ACCOUNT_THROTTLED, Some(&body), attempt_start,
+                );
+                let (rate_limit_error, must_wait_for_upstream) =
+                    account_rate_limit_with_fallback(rate_limit_error, cooldown_secs);
+
+                if must_wait_for_upstream {
+                    return Err(rate_limit_error.into());
+                }
+
+                if remaining == 0 {
+                    return Err(rate_limit_error.into());
+                }
+                last_error = Some(rate_limit_error.into());
+                continue;
+            }
+
             // 瞬态错误
             if matches!(status.as_u16(), 408 | 429) || status.is_server_error() {
                 tracing::warn!(
@@ -884,6 +934,7 @@ impl KiroProvider {
                 return Ok(KiroCallResult {
                     response,
                     credential_id: ctx.id,
+                    _in_flight: ctx._in_flight.clone(),
                 });
             }
 
@@ -1024,19 +1075,27 @@ impl KiroProvider {
                 continue;
             }
 
-            // 429 + suspicious activity = 账号级临时风控
+            // 429: 账号级临时风控 (suspicious activity) 或 账号级频控超限 (USER_REQUEST_RATE_EXCEEDED 等)
             // 仅当前凭据被针对，故障转移到其它凭据可立即恢复（受配置开关控制）。
+            let is_throttled = endpoint.is_account_throttled(&body);
+            let is_rate_limited = endpoint.is_account_rate_limited(&body);
             if status.as_u16() == 429
                 && self.token_manager.get_account_throttle_failover()
-                && endpoint.is_account_throttled(&body)
+                && (is_throttled || is_rate_limited)
             {
-                let cooldown_secs = self
-                    .token_manager
-                    .get_account_throttle_cooldown_secs()
-                    .max(1);
+                let cooldown_secs = if is_throttled {
+                    self.token_manager
+                        .get_account_throttle_cooldown_secs()
+                        .max(1)
+                } else {
+                    // 账号级速率超限（如 USER_REQUEST_RATE_EXCEEDED）：短暂冷却（30秒）避让并立即换号
+                    30u64
+                };
                 let cooldown = std::time::Duration::from_secs(cooldown_secs);
+                let reason_label = if is_throttled { "账号级风控" } else { "账号级频控超限" };
                 tracing::warn!(
-                    "API 请求失败（账号级风控，凭据 #{} 冷却 {}s 并切换，尝试 {}/{}）: {}",
+                    "API 请求失败（{}，凭据 #{} 冷却 {}s 并切换，尝试 {}/{}）: {}",
+                    reason_label,
                     ctx.id,
                     cooldown_secs,
                     attempt + 1,
@@ -1056,7 +1115,7 @@ impl KiroProvider {
                     sink, attempt, ctx.id, endpoint_name, Some(429),
                     outcome::ACCOUNT_THROTTLED, Some(&body), attempt_start,
                 );
-                // 账号级风控通常不返回 Retry-After；此时使用本地实际冷却时间，
+                // 账号级风控/限流通常不返回 Retry-After；此时使用本地实际冷却时间，
                 // 让下游网关在同一时段内也停止调度该虚拟账号。
                 let (rate_limit_error, must_wait_for_upstream) =
                     account_rate_limit_with_fallback(rate_limit_error, cooldown_secs);

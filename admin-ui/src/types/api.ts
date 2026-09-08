@@ -809,3 +809,63 @@ export interface FetchModelsResponse {
   models: string[]
   error?: string
 }
+
+export interface FetchNewApiGroupsRequest {
+  baseUrl: string
+  adminKey: string
+}
+
+export interface FetchNewApiGroupsResponse {
+  success: boolean
+  groups: string[]
+  error?: string
+}
+
+export interface CalculateProfitRequest {
+  baseUrl: string
+  adminKey: string
+  group?: string
+  timeRange?: string // 'today' | '24h' | '7d' | '30d' | 'all' | 'custom'
+  startTimestamp?: number
+  endTimestamp?: number
+  sellingCreditPrice?: number
+  costCreditPrice?: number
+  costMode?: string // 'credit_price' | 'official_model'
+  quotaPerUsd?: number
+}
+
+export interface ProfitModelBreakdown {
+  modelName: string
+  requestCount: number
+  quota: number
+  promptTokens: number
+  completionTokens: number
+  cacheReadTokens: number
+  cacheCreationTokens: number
+  revenueUsd: number
+  costUsd: number
+  profitUsd: number
+  profitMargin: number
+}
+
+export interface CalculateProfitResponse {
+  success: boolean
+  group: string
+  groupRatio?: number
+  timeRange: string
+  startTimestamp: number
+  endTimestamp: number
+  totalQuota: number
+  totalRevenueUsd: number
+  totalCostUsd: number
+  totalProfitUsd: number
+  profitMargin: number
+  estimatedTotalCredits: number
+  totalRequests: number
+  avgRevenuePerRequest: number
+  avgCostPerRequest: number
+  sampledRequests: number
+  modelBreakdowns: ProfitModelBreakdown[]
+  error?: string
+}
+

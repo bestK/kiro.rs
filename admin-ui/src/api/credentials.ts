@@ -45,6 +45,10 @@ import type {
   VerifyBillingHistoryItem,
   FetchModelsRequest,
   FetchModelsResponse,
+  FetchNewApiGroupsRequest,
+  FetchNewApiGroupsResponse,
+  CalculateProfitRequest,
+  CalculateProfitResponse,
 } from '@/types/api'
 
 // 创建 axios 实例
@@ -628,6 +632,26 @@ export async function fetchTokenByCreditModels(
 ): Promise<FetchModelsResponse> {
   const { data } = await api.post<FetchModelsResponse>('/config/token-by-credit/models', req, {
     timeout: 15000,
+  })
+  return data
+}
+
+// 获取下游 New API 分组列表
+export async function fetchNewApiGroups(
+  req: FetchNewApiGroupsRequest
+): Promise<FetchNewApiGroupsResponse> {
+  const { data } = await api.post<FetchNewApiGroupsResponse>('/config/token-by-credit/newapi-groups', req, {
+    timeout: 15000,
+  })
+  return data
+}
+
+// 测算下游用量与毛利润盈亏
+export async function calculateProfit(
+  req: CalculateProfitRequest
+): Promise<CalculateProfitResponse> {
+  const { data } = await api.post<CalculateProfitResponse>('/config/token-by-credit/profit-calc', req, {
+    timeout: 35000,
   })
   return data
 }

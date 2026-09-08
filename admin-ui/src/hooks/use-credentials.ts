@@ -32,6 +32,8 @@ import {
   getBillingVerifications,
   clearBillingVerifications,
   fetchTokenByCreditModels,
+  fetchNewApiGroups,
+  calculateProfit,
   getSessionAffinityConfig,
   setSessionAffinityConfig,
   getGlobalProxy,
@@ -417,6 +419,20 @@ export function useClearBillingVerifications() {
 export function useFetchTokenByCreditModels() {
   return useMutation({
     mutationFn: fetchTokenByCreditModels,
+  })
+}
+
+// 获取下游 New API 分组列表
+export function useFetchNewApiGroups() {
+  return useMutation({
+    mutationFn: fetchNewApiGroups,
+  })
+}
+
+// 测算下游用量与毛利润盈亏
+export function useCalculateProfit() {
+  return useMutation({
+    mutationFn: calculateProfit,
   })
 }
 

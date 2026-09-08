@@ -21,7 +21,7 @@ use super::{
         get_cache_metering_config, get_session_affinity_config,
         get_token_by_credit_config, set_token_by_credit_config,
         verify_downstream_billing, get_billing_verifications, clear_billing_verifications,
-        fetch_token_by_credit_models,
+        fetch_token_by_credit_models, fetch_newapi_groups, calculate_profit,
         get_load_balancing_mode, get_log_governance_config, get_proxy_pool, get_self_heal_config,
         get_update_config, list_client_keys, list_groups, list_traces, poll_idc_login,
         poll_idc_relogin, poll_social_login, poll_social_relogin, pull_update_image,
@@ -148,6 +148,14 @@ pub fn create_admin_router(state: AdminState) -> Router {
         .route(
             "/config/token-by-credit/models",
             post(fetch_token_by_credit_models),
+        )
+        .route(
+            "/config/token-by-credit/newapi-groups",
+            post(fetch_newapi_groups),
+        )
+        .route(
+            "/config/token-by-credit/profit-calc",
+            post(calculate_profit),
         )
         .route(
             "/config/token-by-credit/verifications",

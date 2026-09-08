@@ -57,6 +57,8 @@ use super::types::{
     UpdateCredentialRequest, UpdateRefreshTokenRequest,
     VerifyBillingRequest, VerifyBillingResponse, VerifyBillingHistoryItem,
     FetchModelsRequest, FetchModelsResponse,
+    FetchNewApiGroupsRequest, FetchNewApiGroupsResponse,
+    CalculateProfitRequest, CalculateProfitResponse, ProfitModelBreakdown,
 };
 
 /// 余额缓存过期时间（秒），5 分钟
@@ -1243,6 +1245,415 @@ impl AdminService {
             success: true,
             source: "local".to_string(),
             models,
+            error: None,
+        })
+    }
+
+    /// 解析 New API /api/group/ 返回的分组列表
+    pub fn parse_groups_from_json(body: &str) -> Vec<String> {
+        if let Ok(val) = serde_json::from_str::<serde_json::Value>(body) {
+            if let Some(arr) = val.get("data").and_then(|d| d.as_array()) {
+                return arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect();
+            }
+            if let Some(arr) = val.get("groups").and_then(|g| g.as_array()) {
+                return arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect();
+            }
+            if let Some(arr) = val.as_array() {
+                return arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect();
+            }
+        }
+        Vec::new()
+    }
+
+    /// 获取下游 New API 分组列表
+    pub async fn fetch_newapi_groups(
+        &self,
+        req: FetchNewApiGroupsRequest,
+    ) -> Result<FetchNewApiGroupsResponse, AdminServiceError> {
+        let base_url = req.base_url.trim().trim_end_matches('/');
+        if base_url.is_empty() {
+            return Err(AdminServiceError::InvalidCredential("下游 New API 地址不能为空".to_string()));
+        }
+        let admin_key = req.admin_key.trim();
+        if admin_key.is_empty() {
+            return Err(AdminServiceError::InvalidCredential("管理员令牌不能为空".to_string()));
+        }
+
+        let client = match reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(15))
+            .build()
+        {
+            Ok(c) => c,
+            Err(e) => return Err(AdminServiceError::InternalError(format!("创建 HTTP 客户端失败: {}", e))),
+        };
+
+        let group_url = format!("{}/api/group/", base_url);
+        let resp = match client
+            .get(&group_url)
+            .header("Authorization", format!("Bearer {}", admin_key))
+            .send()
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                return Ok(FetchNewApiGroupsResponse {
+                    success: false,
+                    groups: Vec::new(),
+                    error: Some(format!("请求下游 New API 失败: {}", e)),
+                });
+            }
+        };
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Ok(FetchNewApiGroupsResponse {
+                success: false,
+                groups: Vec::new(),
+                error: Some(format!("New API 返回错误 HTTP {}: {}", status, body.chars().take(120).collect::<String>())),
+            });
+        }
+
+        let body = resp.text().await.unwrap_or_default();
+        let groups = Self::parse_groups_from_json(&body);
+        Ok(FetchNewApiGroupsResponse {
+            success: true,
+            groups,
+            error: None,
+        })
+    }
+
+    /// 利润与盈亏测算
+    pub async fn calculate_profit(
+        &self,
+        req: CalculateProfitRequest,
+    ) -> Result<CalculateProfitResponse, AdminServiceError> {
+        let base_url = req.base_url.trim().trim_end_matches('/');
+        if base_url.is_empty() {
+            return Err(AdminServiceError::InvalidCredential("下游 New API 地址不能为空".to_string()));
+        }
+        let admin_key = req.admin_key.trim();
+        if admin_key.is_empty() {
+            return Err(AdminServiceError::InvalidCredential("管理员令牌不能为空".to_string()));
+        }
+
+        let client = match reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+        {
+            Ok(c) => c,
+            Err(e) => return Err(AdminServiceError::InternalError(format!("创建 HTTP 客户端失败: {}", e))),
+        };
+
+        let now_ts = chrono::Utc::now().timestamp();
+        let (start_ts, end_ts) = match req.time_range.as_str() {
+            "today" => {
+                let today_start = now_ts - (now_ts % 86400);
+                (today_start, now_ts)
+            }
+            "24h" => (now_ts.saturating_sub(86400), now_ts),
+            "7d" => (now_ts.saturating_sub(7 * 86400), now_ts),
+            "30d" => (now_ts.saturating_sub(30 * 86400), now_ts),
+            "all" => (0, now_ts),
+            "custom" => (
+                req.start_timestamp.unwrap_or(0),
+                req.end_timestamp.unwrap_or(now_ts),
+            ),
+            _ => (now_ts.saturating_sub(86400), now_ts),
+        };
+
+        // 获取当前折算配置中的单价作为默认销售折算价
+        let current_cfg = self.get_token_by_credit_config();
+        let selling_price = req.selling_credit_price
+            .filter(|&p| p > 0.0)
+            .unwrap_or(current_cfg.credit_price);
+
+        // 确定上游采购成本单价
+        let cost_price = req.cost_credit_price
+            .filter(|&p| p >= 0.0)
+            .unwrap_or(selling_price * 0.5);
+
+        let quota_per_usd = if req.quota_per_usd > 0.0 {
+            req.quota_per_usd
+        } else {
+            500_000.0
+        };
+
+        let selected_group = req.group.as_deref().unwrap_or("").trim();
+        let is_all_groups = selected_group.is_empty() || selected_group == "__all__" || selected_group == "全部分组";
+
+        // 1. 请求 /api/log/stat?type=2 获取全量 Quota
+        let mut stat_url = format!("{}/api/log/stat?type=2", base_url);
+        if !is_all_groups {
+            stat_url.push_str(&format!("&group={}", urlencoding::encode(selected_group)));
+        }
+        if start_ts > 0 {
+            stat_url.push_str(&format!("&start_timestamp={}", start_ts));
+        }
+        if end_ts > 0 {
+            stat_url.push_str(&format!("&end_timestamp={}", end_ts));
+        }
+
+        let stat_resp = client
+            .get(&stat_url)
+            .header("Authorization", format!("Bearer {}", admin_key))
+            .send()
+            .await;
+
+        let total_quota = match stat_resp {
+            Ok(resp) => {
+                if resp.status().is_success() {
+                    let text = resp.text().await.unwrap_or_default();
+                    serde_json::from_str::<serde_json::Value>(&text)
+                        .ok()
+                        .and_then(|v| v.get("data")?.get("quota")?.as_u64())
+                        .unwrap_or(0)
+                } else {
+                    0
+                }
+            }
+            Err(e) => {
+                return Ok(CalculateProfitResponse {
+                    success: false,
+                    group: if is_all_groups { "全部分组 (汇总)".to_string() } else { selected_group.to_string() },
+                    group_ratio: None,
+                    time_range: req.time_range,
+                    start_timestamp: start_ts,
+                    end_timestamp: end_ts,
+                    total_quota: 0,
+                    total_revenue_usd: 0.0,
+                    total_cost_usd: 0.0,
+                    total_profit_usd: 0.0,
+                    profit_margin: 0.0,
+                    estimated_total_credits: 0.0,
+                    total_requests: 0,
+                    avg_revenue_per_request: 0.0,
+                    avg_cost_per_request: 0.0,
+                    sampled_requests: 0,
+                    model_breakdowns: Vec::new(),
+                    error: Some(format!("获取用量统计失败: {}", e)),
+                });
+            }
+        };
+
+        // 2. 请求 /api/log/?p=0&page_size=100&type=2 获取总请求数与明细采样
+        let mut log_url = format!("{}/api/log/?p=0&page_size=100&type=2", base_url);
+        if !is_all_groups {
+            log_url.push_str(&format!("&group={}", urlencoding::encode(selected_group)));
+        }
+        if start_ts > 0 {
+            log_url.push_str(&format!("&start_timestamp={}", start_ts));
+        }
+        if end_ts > 0 {
+            log_url.push_str(&format!("&end_timestamp={}", end_ts));
+        }
+
+        let log_resp = client
+            .get(&log_url)
+            .header("Authorization", format!("Bearer {}", admin_key))
+            .send()
+            .await;
+
+        let mut total_requests = 0u64;
+        let mut detected_group_ratio = None;
+        let mut model_map: std::collections::HashMap<String, ProfitModelBreakdown> = std::collections::HashMap::new();
+        let mut sampled_quota_sum = 0u64;
+        let mut sampled_requests = 0u64;
+
+        if let Ok(resp) = log_resp {
+            if resp.status().is_success() {
+                let text = resp.text().await.unwrap_or_default();
+                if let Ok(val) = serde_json::from_str::<serde_json::Value>(&text) {
+                    if let Some(data) = val.get("data") {
+                        total_requests = data.get("total").and_then(|t| t.as_u64()).unwrap_or(0);
+                        if let Some(items) = data.get("items").and_then(|i| i.as_array()) {
+                            sampled_requests = items.len() as u64;
+                            for item in items {
+                                let model_name = item.get("model_name").and_then(|m| m.as_str()).unwrap_or("unknown").to_string();
+                                let quota = item.get("quota").and_then(|q| q.as_u64()).unwrap_or(0);
+                                let prompt_tokens = item.get("prompt_tokens").and_then(|p| p.as_u64()).unwrap_or(0);
+                                let completion_tokens = item.get("completion_tokens").and_then(|c| c.as_u64()).unwrap_or(0);
+
+                                let mut cache_read = 0u64;
+                                let mut cache_creation = 0u64;
+                                if let Some(other_str) = item.get("other").and_then(|o| o.as_str()) {
+                                    if let Ok(other_val) = serde_json::from_str::<serde_json::Value>(other_str) {
+                                        cache_read = other_val.get("cache_tokens").and_then(|c| c.as_u64()).unwrap_or(0);
+                                        cache_creation = other_val.get("cache_creation_tokens")
+                                            .or_else(|| other_val.get("cache_write_tokens"))
+                                            .and_then(|c| c.as_u64()).unwrap_or(0);
+                                        if detected_group_ratio.is_none() {
+                                            if let Some(gr) = other_val.get("group_ratio").and_then(|g| g.as_f64()) {
+                                                detected_group_ratio = Some(gr);
+                                            }
+                                        }
+                                    }
+                                }
+
+                                sampled_quota_sum += quota;
+
+                                let entry = model_map.entry(model_name.clone()).or_insert_with(|| ProfitModelBreakdown {
+                                    model_name: model_name.clone(),
+                                    request_count: 0,
+                                    quota: 0,
+                                    prompt_tokens: 0,
+                                    completion_tokens: 0,
+                                    cache_read_tokens: 0,
+                                    cache_creation_tokens: 0,
+                                    revenue_usd: 0.0,
+                                    cost_usd: 0.0,
+                                    profit_usd: 0.0,
+                                    profit_margin: 0.0,
+                                });
+                                entry.request_count += 1;
+                                entry.quota += quota;
+                                entry.prompt_tokens += prompt_tokens;
+                                entry.completion_tokens += completion_tokens;
+                                entry.cache_read_tokens += cache_read;
+                                entry.cache_creation_tokens += cache_creation;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 下游实收营业额 (USD)
+        let total_revenue_usd = total_quota as f64 / quota_per_usd;
+        // 折合总消耗积分
+        let estimated_total_credits = if selling_price > 0.0 {
+            total_revenue_usd / selling_price
+        } else {
+            0.0
+        };
+
+        let total_cost_usd = match req.cost_mode.as_str() {
+            "official_model" => {
+                let mut sampled_official_cost = 0.0;
+                for (m, entry) in &model_map {
+                    let cost = if let Some(pm) = &self.pricing_manager {
+                        pm.get_cost(m)
+                    } else {
+                        crate::model::pricing::ModelCost::default()
+                    };
+                    let in_price = cost.input;
+                    let out_price = cost.output;
+                    let cache_price = in_price * 0.1;
+                    let c = (entry.prompt_tokens as f64 * (in_price / 1_000_000.0))
+                        + (entry.completion_tokens as f64 * (out_price / 1_000_000.0))
+                        + (entry.cache_read_tokens as f64 * (cache_price / 1_000_000.0));
+                    sampled_official_cost += c;
+                }
+                if sampled_quota_sum > 0 {
+                    let sampled_rev = sampled_quota_sum as f64 / quota_per_usd;
+                    if sampled_rev > 0.0 {
+                        let ratio = sampled_official_cost / sampled_rev;
+                        total_revenue_usd * ratio
+                    } else {
+                        estimated_total_credits * cost_price
+                    }
+                } else {
+                    estimated_total_credits * cost_price
+                }
+            }
+            _ => {
+                // 按积分采购单价核算
+                estimated_total_credits * cost_price
+            }
+        };
+
+        let total_profit_usd = total_revenue_usd - total_cost_usd;
+        let profit_margin = if total_revenue_usd > 0.0 {
+            (total_profit_usd / total_revenue_usd) * 100.0
+        } else {
+            0.0
+        };
+
+        let avg_revenue_per_request = if total_requests > 0 {
+            total_revenue_usd / total_requests as f64
+        } else {
+            0.0
+        };
+
+        let avg_cost_per_request = if total_requests > 0 {
+            total_cost_usd / total_requests as f64
+        } else {
+            0.0
+        };
+
+        // 按采样与全量比例计算各模型在当前总收入与成本中的分摊
+        let scale_factor = if sampled_quota_sum > 0 && total_quota > 0 {
+            total_quota as f64 / sampled_quota_sum as f64
+        } else {
+            1.0
+        };
+
+        let mut model_breakdowns: Vec<ProfitModelBreakdown> = model_map
+            .into_values()
+            .map(|mut item| {
+                let m_quota = if (scale_factor - 1.0).abs() > 0.0001 {
+                    (item.quota as f64 * scale_factor).round() as u64
+                } else {
+                    item.quota
+                };
+                let m_rev = m_quota as f64 / quota_per_usd;
+                let m_cost = if req.cost_mode == "official_model" {
+                    let cost = if let Some(pm) = &self.pricing_manager {
+                        pm.get_cost(&item.model_name)
+                    } else {
+                        crate::model::pricing::ModelCost::default()
+                    };
+                    let in_price = cost.input;
+                    let out_price = cost.output;
+                    let cache_price = in_price * 0.1;
+                    let sample_cost = (item.prompt_tokens as f64 * (in_price / 1_000_000.0))
+                        + (item.completion_tokens as f64 * (out_price / 1_000_000.0))
+                        + (item.cache_read_tokens as f64 * (cache_price / 1_000_000.0));
+                    sample_cost * scale_factor
+                } else {
+                    let m_credits = if selling_price > 0.0 { m_rev / selling_price } else { 0.0 };
+                    m_credits * cost_price
+                };
+
+                let m_profit = m_rev - m_cost;
+                let m_margin = if m_rev > 0.0 { (m_profit / m_rev) * 100.0 } else { 0.0 };
+                let m_reqs = if (scale_factor - 1.0).abs() > 0.0001 && sampled_requests > 0 && total_requests > 0 {
+                    ((item.request_count as f64 / sampled_requests as f64) * total_requests as f64).round() as u64
+                } else {
+                    item.request_count
+                };
+
+                item.quota = m_quota;
+                item.request_count = m_reqs;
+                item.revenue_usd = m_rev;
+                item.cost_usd = m_cost;
+                item.profit_usd = m_profit;
+                item.profit_margin = m_margin;
+                item
+            })
+            .collect();
+
+        // 默认按配额从高到低排序
+        model_breakdowns.sort_by(|a, b| b.quota.cmp(&a.quota));
+
+        Ok(CalculateProfitResponse {
+            success: true,
+            group: if is_all_groups { "全部分组 (汇总)".to_string() } else { selected_group.to_string() },
+            group_ratio: detected_group_ratio,
+            time_range: req.time_range,
+            start_timestamp: start_ts,
+            end_timestamp: end_ts,
+            total_quota,
+            total_revenue_usd,
+            total_cost_usd,
+            total_profit_usd,
+            profit_margin,
+            estimated_total_credits,
+            total_requests,
+            avg_revenue_per_request,
+            avg_cost_per_request,
+            sampled_requests,
+            model_breakdowns,
             error: None,
         })
     }
@@ -4455,5 +4866,23 @@ mod tests {
         let array_json = r#"["gpt-4o", "claude-3-5-sonnet"]"#;
         let parsed = AdminService::parse_models_from_json(array_json);
         assert_eq!(parsed, vec!["gpt-4o", "claude-3-5-sonnet"]);
+    }
+
+    #[test]
+    fn test_parse_groups_from_json() {
+        // New API standard format: {"data": ["group-a", "group-b"], "success": true}
+        let standard_json = r#"{"data":["default","kiro 正价分组0.13x 模拟缓存"],"message":"","success":true}"#;
+        let parsed = AdminService::parse_groups_from_json(standard_json);
+        assert_eq!(parsed, vec!["default", "kiro 正价分组0.13x 模拟缓存"]);
+
+        // Alternative groups field: {"groups": ["g1"]}
+        let alt_json = r#"{"groups":["vip","svip"]}"#;
+        let parsed = AdminService::parse_groups_from_json(alt_json);
+        assert_eq!(parsed, vec!["vip", "svip"]);
+
+        // Direct array format: ["g1", "g2"]
+        let arr_json = r#"["group-1", "group-2"]"#;
+        let parsed = AdminService::parse_groups_from_json(arr_json);
+        assert_eq!(parsed, vec!["group-1", "group-2"]);
     }
 }

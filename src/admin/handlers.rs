@@ -36,6 +36,8 @@ use super::{
         SetCustomModelsRequest,
         VerifyBillingRequest,
         FetchModelsRequest,
+        FetchNewApiGroupsRequest,
+        CalculateProfitRequest,
     },
     usage_stats::{Range, StatsGranularity, StatsQueryWindow},
 };
@@ -729,6 +731,30 @@ pub async fn fetch_token_by_credit_models(
     Json(payload): Json<FetchModelsRequest>,
 ) -> impl IntoResponse {
     match state.service.fetch_models(payload).await {
+        Ok(response) => Json(response).into_response(),
+        Err(e) => (e.status_code(), Json(e.into_response())).into_response(),
+    }
+}
+
+/// POST /api/admin/config/token-by-credit/newapi-groups
+/// 获取下游 New API 分组列表
+pub async fn fetch_newapi_groups(
+    State(state): State<AdminState>,
+    Json(payload): Json<FetchNewApiGroupsRequest>,
+) -> impl IntoResponse {
+    match state.service.fetch_newapi_groups(payload).await {
+        Ok(response) => Json(response).into_response(),
+        Err(e) => (e.status_code(), Json(e.into_response())).into_response(),
+    }
+}
+
+/// POST /api/admin/config/token-by-credit/profit-calc
+/// 测算下游用量与毛利润盈亏
+pub async fn calculate_profit(
+    State(state): State<AdminState>,
+    Json(payload): Json<CalculateProfitRequest>,
+) -> impl IntoResponse {
+    match state.service.calculate_profit(payload).await {
         Ok(response) => Json(response).into_response(),
         Err(e) => (e.status_code(), Json(e.into_response())).into_response(),
     }

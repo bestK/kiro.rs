@@ -22,6 +22,7 @@ import {
   X,
   RefreshCw,
   Search,
+  TrendingUp,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -45,6 +46,7 @@ import { reportSaveError } from '@/components/settings/report-error'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import type { VerifyBillingResponse } from '@/types/api'
+import { ProfitCalculator } from '@/components/settings/profit-calculator'
 
 /**
  * 专属基准价格设置行：支持按「每千分单价 (USD / 千分)」与「单积分价格 (USD / 积分)」两种视角无缝切换与修改。
@@ -1442,6 +1444,17 @@ export function BillingSection() {
               onResetPrice={handleResetHypoPrice}
             />
           </div>
+        </div>
+      </SettingGroup>
+
+      {/* 利润测算与用量盈亏分析 */}
+      <SettingGroup
+        title="利润测算与用量盈亏分析"
+        description="填入下游 New API 管理地址与管理员令牌，选择分组与时间范围，拉取真实用量并基于当前配置测算毛利润与利润率。"
+        icon={<TrendingUp className="h-4 w-4" />}
+      >
+        <div className="py-2">
+          <ProfitCalculator currentCreditPrice={creditPrice} />
         </div>
       </SettingGroup>
     </div>

@@ -1490,3 +1490,119 @@ pub struct FetchModelsResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
+
+/// 获取下游 New API 分组列表请求
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FetchNewApiGroupsRequest {
+    pub base_url: String,
+    pub admin_key: String,
+}
+
+/// 获取下游 New API 分组列表响应
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FetchNewApiGroupsResponse {
+    pub success: bool,
+    pub groups: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// 利润与盈亏测算请求
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CalculateProfitRequest {
+    pub base_url: String,
+    pub admin_key: String,
+    /// 选中的分组名称，例如 "kiro 正价分组0.13x 模拟缓存"；若为空或 "__all__" 则汇总全部
+    #[serde(default)]
+    pub group: Option<String>,
+    /// 时间范围："today" | "24h" | "7d" | "30d" | "all" | "custom"
+    #[serde(default = "default_profit_time_range")]
+    pub time_range: String,
+    /// 自定义起始时间戳 (秒)
+    #[serde(default)]
+    pub start_timestamp: Option<i64>,
+    /// 自定义截止时间戳 (秒)
+    #[serde(default)]
+    pub end_timestamp: Option<i64>,
+    /// 销售折算单价（USD/积分），若未指定则使用系统当前配置（例如 0.002 对应 $2.00/千分）
+    #[serde(default)]
+    pub selling_credit_price: Option<f64>,
+    /// 上游采购成本单价（USD/积分），例如拿货成本 $1.00/千分 对应 0.001/积分
+    #[serde(default)]
+    pub cost_credit_price: Option<f64>,
+    /// 成本核算模式："credit_price" | "official_model"
+    #[serde(default = "default_profit_cost_mode")]
+    pub cost_mode: String,
+    /// New API 汇率：每 1 美元对应 Quota 数，默认 500,000
+    #[serde(default = "default_profit_quota_per_usd")]
+    pub quota_per_usd: f64,
+}
+
+fn default_profit_time_range() -> String {
+    "today".to_string()
+}
+
+fn default_profit_cost_mode() -> String {
+    "credit_price".to_string()
+}
+
+fn default_profit_quota_per_usd() -> f64 {
+    500_000.0
+}
+
+/// 单模型用量与盈亏明细
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfitModelBreakdown {
+    pub model_name: String,
+    pub request_count: u64,
+    pub quota: u64,
+    pub prompt_tokens: u64,
+    pub completion_tokens: u64,
+    pub cache_read_tokens: u64,
+    pub cache_creation_tokens: u64,
+    pub revenue_usd: f64,
+    pub cost_usd: f64,
+    pub profit_usd: f64,
+    pub profit_margin: f64,
+}
+
+/// 利润测算响应
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CalculateProfitResponse {
+    pub success: bool,
+    pub group: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group_ratio: Option<f64>,
+    pub time_range: String,
+    pub start_timestamp: i64,
+    pub end_timestamp: i64,
+    /// 下游总消费配额
+    pub total_quota: u64,
+    /// 下游实收营业额 (USD) = total_quota / quota_per_usd
+    pub total_revenue_usd: f64,
+    /// 上游核算总成本 (USD)
+    pub total_cost_usd: f64,
+    /// 预估毛利润 (USD) = total_revenue_usd - total_cost_usd
+    pub total_profit_usd: f64,
+    /// 利润率 (%)
+    pub profit_margin: f64,
+    /// 折合总消耗积分 (Credits)
+    pub estimated_total_credits: f64,
+    /// 总请求次数
+    pub total_requests: u64,
+    /// 平均每请求收入 (USD)
+    pub avg_revenue_per_request: f64,
+    /// 平均每请求成本 (USD)
+    pub avg_cost_per_request: f64,
+    /// 采样的分析日志条数
+    pub sampled_requests: u64,
+    /// 各模型明细分布
+    pub model_breakdowns: Vec<ProfitModelBreakdown>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}

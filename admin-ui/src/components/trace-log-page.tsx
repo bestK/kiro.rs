@@ -397,19 +397,28 @@ function CostCell({
   const profitText = profit != null ? `${profitSign}$${Math.abs(profit).toFixed(4)}` : null
 
   const content = (
-    <div className="space-y-0.5 text-xs font-mono">
-      {/* 第一行：上游计费（credits） */}
+    <div className="space-y-0.5 font-mono">
+      {/* 第一行：上游 kiro 积分（字号大些） */}
       <div className="flex items-center gap-1">
-        <span className="font-medium text-gray-900 dark:text-white tabular-nums">
+        <span className="text-sm font-semibold text-gray-900 dark:text-white tabular-nums">
           ${credits.toFixed(4)}
         </span>
       </div>
 
-      {/* 第二行：换行显示盈亏（红盈绿亏）与收入 */}
-      {profitText ? (
-        <div className={cn('text-[11px] font-semibold tabular-nums cursor-help flex items-center gap-0.5', profitColor)}>
-          <span>{isProfit ? '盈' : isLoss ? '亏' : '平'}</span>
-          <span>{profitText}</span>
+      {/* 第二行：newapi收费金额小些，盈亏放到金额后面 */}
+      {revenue != null || profitText ? (
+        <div className="flex items-center gap-1.5 text-[11px] tabular-nums leading-tight cursor-help">
+          {revenue != null && (
+            <span className="text-gray-500 dark:text-gray-400 font-normal">
+              ${revenue.toFixed(4)}
+            </span>
+          )}
+          {profitText && (
+            <span className={cn('font-semibold flex items-center gap-0.5', profitColor)}>
+              <span>{profitText}</span>
+              <span className="text-[10px] font-medium">{isProfit ? '盈' : isLoss ? '亏' : '平'}</span>
+            </span>
+          )}
         </div>
       ) : status === 'not_found' ? (
         <div className="text-[10px] text-muted-foreground/50 font-sans">

@@ -67,6 +67,12 @@ pub struct ClientKey {
     /// 该账号 1 积分对应的金额（None 表示继承分组或全局配置）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub credit_price: Option<f64>,
+    /// 该账号是否开启模拟 Prompt 缓存拆分（None 表示继承分组或全局配置）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub simulated_cache_enabled: Option<bool>,
+    /// 该账号模拟 Prompt 缓存命中率（None 表示继承分组或全局配置）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub simulated_cache_ratio: Option<f64>,
 }
 
 /// 鉴权结果：区分「命中」「超额」「未命中」，供中间件返回不同 HTTP 状态。
@@ -205,6 +211,8 @@ impl ClientKeyManager {
             is_system: false,
             token_by_credit_enabled: None,
             credit_price: None,
+            simulated_cache_enabled: None,
+            simulated_cache_ratio: None,
         };
         inner.by_key.insert(plaintext, id);
         inner.entries.insert(id, entry.clone());
@@ -251,6 +259,8 @@ impl ClientKeyManager {
                     is_system: true,
                     token_by_credit_enabled: None,
                     credit_price: None,
+                    simulated_cache_enabled: None,
+                    simulated_cache_ratio: None,
                 },
             );
             changed = true;
@@ -355,7 +365,7 @@ impl ClientKeyManager {
         self.inner.read().entries.get(&id).cloned()
     }
 
-    /// 更新按积分返回 Token 的设置
+    /// 更新按积分返回 Token 及缓存模拟设置
     pub fn update_token_by_credit(
         &self,
         id: u64,
@@ -363,6 +373,10 @@ impl ClientKeyManager {
         reset_enabled: bool,
         price: Option<f64>,
         reset_price: bool,
+        simulated_cache_enabled: Option<bool>,
+        reset_simulated_cache: bool,
+        simulated_cache_ratio: Option<f64>,
+        reset_simulated_cache_ratio: bool,
     ) -> bool {
         let mut inner = self.inner.write();
         let updated = match inner.entries.get_mut(&id) {
@@ -376,6 +390,16 @@ impl ClientKeyManager {
                     e.credit_price = None;
                 } else if price.is_some() {
                     e.credit_price = price;
+                }
+                if reset_simulated_cache {
+                    e.simulated_cache_enabled = None;
+                } else if simulated_cache_enabled.is_some() {
+                    e.simulated_cache_enabled = simulated_cache_enabled;
+                }
+                if reset_simulated_cache_ratio || reset_simulated_cache {
+                    e.simulated_cache_ratio = None;
+                } else if simulated_cache_ratio.is_some() {
+                    e.simulated_cache_ratio = simulated_cache_ratio;
                 }
                 true
             }

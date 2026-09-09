@@ -514,6 +514,8 @@ export interface ClientKeyItem {
   isSystem: boolean
   tokenByCreditEnabled?: boolean | null
   creditPrice?: number | null
+  simulatedCacheEnabled?: boolean | null
+  simulatedCacheRatio?: number | null
 }
 
 export interface ClientKeysResponse {
@@ -542,6 +544,8 @@ export interface CreateClientKeyRequest {
   maxCredits?: number
   tokenByCreditEnabled?: boolean
   creditPrice?: number
+  simulatedCacheEnabled?: boolean
+  simulatedCacheRatio?: number
 }
 
 /** 创建响应：明文 Key 仅在此处返回一次 */
@@ -560,6 +564,10 @@ export interface UpdateClientKeyRequest {
   resetTokenByCredit?: boolean
   creditPrice?: number
   resetCreditPrice?: boolean
+  simulatedCacheEnabled?: boolean
+  resetSimulatedCache?: boolean
+  simulatedCacheRatio?: number
+  resetSimulatedCacheRatio?: boolean
 }
 
 // ============ 用量统计 ============
@@ -830,6 +838,8 @@ export interface GroupItem {
   effectiveCredentialCount?: number
   tokenByCreditEnabled?: boolean | null
   creditPrice?: number | null
+  simulatedCacheEnabled?: boolean | null
+  simulatedCacheRatio?: number | null
 }
 
 export interface GroupsResponse {
@@ -851,6 +861,8 @@ export interface CreateGroupRequest {
   description?: string
   tokenByCreditEnabled?: boolean
   creditPrice?: number
+  simulatedCacheEnabled?: boolean
+  simulatedCacheRatio?: number
   references?: GroupReference[]
   autoAssignFilter?: CredentialFilterCriteria
 }
@@ -864,6 +876,10 @@ export interface UpdateGroupRequest {
   resetTokenByCredit?: boolean
   creditPrice?: number
   resetCreditPrice?: boolean
+  simulatedCacheEnabled?: boolean
+  resetSimulatedCache?: boolean
+  simulatedCacheRatio?: number
+  resetSimulatedCacheRatio?: boolean
   references?: GroupReference[]
 }
 

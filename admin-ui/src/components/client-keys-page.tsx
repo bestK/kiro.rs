@@ -532,24 +532,46 @@ export function ClientKeysPage() {
         cell: (k) => {
           if (k.tokenByCreditEnabled === true) {
             const kPrice = k.creditPrice != null ? +(k.creditPrice * 1000).toFixed(4) : null
+            const cacheText =
+              k.simulatedCacheEnabled === false
+                ? '无缓存拆分'
+                : k.simulatedCacheRatio != null
+                ? `${Math.round(k.simulatedCacheRatio * 100)}% 缓存`
+                : k.simulatedCacheEnabled === true
+                ? '模拟缓存'
+                : '缓存随上一级'
             return (
-              <Badge
-                variant="outline"
-                className="border-emerald-500/40 text-emerald-600 bg-emerald-500/10 font-normal"
-                title={
-                  k.creditPrice != null
-                    ? `专属单价：$${kPrice}/千分 (折合 $${k.creditPrice}/积分)`
-                    : '继承分组或全局单价'
-                }
-              >
-                按积分 {kPrice != null ? `($${kPrice}/千分)` : ''}
-              </Badge>
+              <div className="flex flex-col gap-1 items-start">
+                <Badge
+                  variant="outline"
+                  className="border-emerald-500/40 text-emerald-600 bg-emerald-500/10 font-normal"
+                  title={
+                    k.creditPrice != null
+                      ? `专属单价：$${kPrice}/千分 (折合 $${k.creditPrice}/积分)`
+                      : '继承分组或全局单价'
+                  }
+                >
+                  按积分 {kPrice != null ? `($${kPrice}/千分)` : ''}
+                </Badge>
+                <span className="text-[11px] text-muted-foreground">
+                  {cacheText}
+                </span>
+              </div>
             )
           }
           if (k.tokenByCreditEnabled === false) {
             return <Badge variant="secondary" className="text-muted-foreground font-normal">真实用量</Badge>
           }
-          return <span className="text-[12px] text-muted-foreground">继承</span>
+          return (
+            <div className="flex flex-col gap-0.5 items-start">
+              <span className="text-[12px] text-muted-foreground">继承</span>
+              {k.simulatedCacheRatio != null && (
+                <span className="text-[10px] text-muted-foreground">
+                  缓存 {Math.round(k.simulatedCacheRatio * 100)}%
+                </span>
+              )}
+            </div>
+          )
         },
       },
       {

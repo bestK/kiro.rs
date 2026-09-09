@@ -1084,6 +1084,12 @@ pub struct ClientKeyItem {
     /// 1 积分对应的金额（None 表示继承分组或全局配置）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub credit_price: Option<f64>,
+    /// 是否开启模拟 Prompt 缓存拆分（None 表示继承分组或全局配置）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub simulated_cache_enabled: Option<bool>,
+    /// 模拟 Prompt 缓存命中率（None 表示继承分组或全局配置）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub simulated_cache_ratio: Option<f64>,
 }
 
 /// 客户端 Key 列表响应
@@ -1179,6 +1185,12 @@ pub struct CreateClientKeyRequest {
     /// 1 积分对应的金额（None 表示继承）
     #[serde(default)]
     pub credit_price: Option<f64>,
+    /// 是否开启模拟 Prompt 缓存拆分（None 表示继承）
+    #[serde(default)]
+    pub simulated_cache_enabled: Option<bool>,
+    /// 模拟 Prompt 缓存命中率（None 表示继承）
+    #[serde(default)]
+    pub simulated_cache_ratio: Option<f64>,
 }
 
 /// 创建客户端 Key 响应（明文 Key 仅在此处返回一次）
@@ -1211,6 +1223,18 @@ pub struct UpdateClientKeyRequest {
     /// 是否重置金额设置为继承
     #[serde(default)]
     pub reset_credit_price: Option<bool>,
+    /// 是否开启模拟 Prompt 缓存拆分
+    #[serde(default)]
+    pub simulated_cache_enabled: Option<bool>,
+    /// 是否重置模拟 Prompt 缓存拆分为继承
+    #[serde(default)]
+    pub reset_simulated_cache: Option<bool>,
+    /// 模拟 Prompt 缓存命中率（0.01..0.99）
+    #[serde(default)]
+    pub simulated_cache_ratio: Option<f64>,
+    /// 是否重置模拟 Prompt 缓存命中率为继承
+    #[serde(default)]
+    pub reset_simulated_cache_ratio: Option<bool>,
 }
 
 /// 设置客户端 Key 的积分使用上限
@@ -1482,6 +1506,12 @@ pub struct GroupItem {
     /// 该分组 1 积分对应的金额（None 表示继承全局配置）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub credit_price: Option<f64>,
+    /// 是否开启模拟 Prompt 缓存拆分（None 表示继承全局配置）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub simulated_cache_enabled: Option<bool>,
+    /// 模拟 Prompt 缓存命中率（None 表示继承全局配置）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub simulated_cache_ratio: Option<f64>,
     /// 本分组引用的其他分组列表
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub references: Vec<crate::admin::groups::GroupReference>,
@@ -1527,6 +1557,10 @@ pub struct CreateGroupRequest {
     #[serde(default)]
     pub credit_price: Option<f64>,
     #[serde(default)]
+    pub simulated_cache_enabled: Option<bool>,
+    #[serde(default)]
+    pub simulated_cache_ratio: Option<f64>,
+    #[serde(default)]
     pub references: Option<Vec<crate::admin::groups::GroupReference>>,
     /// 可选：创建分组后立即按字段条件自动归入匹配的凭据
     #[serde(default)]
@@ -1555,6 +1589,18 @@ pub struct UpdateGroupRequest {
     /// 是否重置金额设置为继承
     #[serde(default)]
     pub reset_credit_price: Option<bool>,
+    /// 是否开启模拟 Prompt 缓存拆分
+    #[serde(default)]
+    pub simulated_cache_enabled: Option<bool>,
+    /// 是否重置模拟 Prompt 缓存拆分为继承
+    #[serde(default)]
+    pub reset_simulated_cache: Option<bool>,
+    /// 模拟 Prompt 缓存命中率（0.01..0.99）
+    #[serde(default)]
+    pub simulated_cache_ratio: Option<f64>,
+    /// 是否重置模拟 Prompt 缓存命中率为继承
+    #[serde(default)]
+    pub reset_simulated_cache_ratio: Option<bool>,
     /// 引用的其他分组列表；传入则覆盖更新
     #[serde(default)]
     pub references: Option<Vec<crate::admin::groups::GroupReference>>,

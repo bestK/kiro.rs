@@ -39,6 +39,62 @@ impl Default for TokenByCreditConfig {
     }
 }
 
+impl TokenByCreditConfig {
+    /// 三级继承解析：Key 设置 > 分组设置 > 全局配置
+    ///
+    /// 当全局未开启计费折算时，单独开启了折算的分组或 Key 仍可独立生效，
+    /// 并且自定义缓存率或缓存模拟设置也按三级层级准确继承。
+    pub fn resolve(
+        client_key: Option<&crate::admin::client_keys::ClientKey>,
+        group: Option<&crate::admin::groups::Group>,
+        global_tbc: &crate::model::pricing::TokenByCreditState,
+    ) -> Self {
+        // 1. token_by_credit_enabled: Key > Group > Global
+        let enabled = client_key
+            .and_then(|k| k.token_by_credit_enabled)
+            .or_else(|| group.and_then(|g| g.token_by_credit_enabled))
+            .unwrap_or(global_tbc.enabled);
+
+        // 2. credit_price: Key > Group > Global (<= 0.0 则兜底 0.002)
+        let mut credit_price = client_key
+            .and_then(|k| k.credit_price)
+            .or_else(|| group.and_then(|g| g.credit_price))
+            .unwrap_or(global_tbc.credit_price);
+        if credit_price <= 0.0 {
+            credit_price = 0.002;
+        }
+
+        // 3. simulated_cache_ratio: Key > Group > Global (范围 0.01..0.99)
+        let simulated_cache_ratio = client_key
+            .and_then(|k| k.simulated_cache_ratio)
+            .or_else(|| group.and_then(|g| g.simulated_cache_ratio))
+            .unwrap_or(global_tbc.simulated_cache_ratio)
+            .clamp(0.01, 0.99);
+
+        // 4. simulated_cache_enabled: Key > Group > Global
+        // 若在当前层级显式配置了 simulated_cache_ratio 且未显式关闭 (Some(false))，
+        // 则视为开启缓存模拟，确保设置了专属缓存率即自动启用模拟拆分。
+        let simulated_cache_enabled = if let Some(key_cache) = client_key.and_then(|k| k.simulated_cache_enabled) {
+            key_cache
+        } else if client_key.and_then(|k| k.simulated_cache_ratio).is_some() {
+            true
+        } else if let Some(grp_cache) = group.and_then(|g| g.simulated_cache_enabled) {
+            grp_cache
+        } else if group.and_then(|g| g.simulated_cache_ratio).is_some() {
+            true
+        } else {
+            global_tbc.simulated_cache_enabled
+        };
+
+        Self {
+            enabled,
+            credit_price,
+            simulated_cache_enabled,
+            simulated_cache_ratio,
+        }
+    }
+}
+
 /// 命中的鉴权上下文（注入到请求扩展，供 handler 记录用量）
 #[derive(Clone, Debug)]
 pub struct KeyContext {
@@ -193,25 +249,11 @@ pub async fn auth_middleware(
                     .map(|s| s.read().clone())
                     .unwrap_or_default();
 
-                // 继承决策：账号设置 > 分组设置 > 全局配置
-                let token_by_credit_enabled = client_key
-                    .as_ref()
-                    .and_then(|k| k.token_by_credit_enabled)
-                    .or_else(|| group_obj.as_ref().and_then(|g| g.token_by_credit_enabled))
-                    .unwrap_or(global_tbc.enabled);
-
-                let credit_price = client_key
-                    .as_ref()
-                    .and_then(|k| k.credit_price)
-                    .or_else(|| group_obj.as_ref().and_then(|g| g.credit_price))
-                    .unwrap_or(global_tbc.credit_price);
-
-                let token_by_credit = TokenByCreditConfig {
-                    enabled: token_by_credit_enabled,
-                    credit_price,
-                    simulated_cache_enabled: global_tbc.simulated_cache_enabled,
-                    simulated_cache_ratio: global_tbc.simulated_cache_ratio,
-                };
+                let token_by_credit = TokenByCreditConfig::resolve(
+                    client_key.as_ref(),
+                    group_obj.as_ref(),
+                    &global_tbc,
+                );
 
                 let client_ip = auth::extract_client_ip(&request);
                 request.extensions_mut().insert(KeyContext {
@@ -257,4 +299,149 @@ pub fn cors_layer() -> tower_http::cors::CorsLayer {
         .allow_origin(Any)
         .allow_methods(Any)
         .allow_headers(Any)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::admin::client_keys::ClientKey;
+    use crate::admin::groups::Group;
+    use crate::model::pricing::TokenByCreditState;
+
+    fn make_test_group(
+        enabled: Option<bool>,
+        price: Option<f64>,
+        cache_enabled: Option<bool>,
+        cache_ratio: Option<f64>,
+    ) -> Group {
+        Group {
+            name: "test_grp".to_string(),
+            description: None,
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            token_by_credit_enabled: enabled,
+            credit_price: price,
+            simulated_cache_enabled: cache_enabled,
+            simulated_cache_ratio: cache_ratio,
+            references: Vec::new(),
+        }
+    }
+
+    fn make_test_key(
+        enabled: Option<bool>,
+        price: Option<f64>,
+        cache_enabled: Option<bool>,
+        cache_ratio: Option<f64>,
+    ) -> ClientKey {
+        ClientKey {
+            id: 1,
+            key: "sk-test".to_string(),
+            name: "test_key".to_string(),
+            description: None,
+            disabled: false,
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            last_used_at: None,
+            total_calls: 0,
+            total_input_tokens: 0,
+            total_output_tokens: 0,
+            total_cache_creation_tokens: 0,
+            total_cache_read_tokens: 0,
+            total_credits: 0.0,
+            max_credits: None,
+            group: Some("test_grp".to_string()),
+            is_system: false,
+            token_by_credit_enabled: enabled,
+            credit_price: price,
+            simulated_cache_enabled: cache_enabled,
+            simulated_cache_ratio: cache_ratio,
+        }
+    }
+
+    #[test]
+    fn test_global_disabled_group_enabled_works() {
+        let global_tbc = TokenByCreditState {
+            enabled: false,
+            credit_price: 0.002,
+            models_dev_url: "https://models.dev/api.json".to_string(),
+            pricing_refresh_hours: 24,
+            simulated_cache_enabled: false,
+            simulated_cache_ratio: 0.8,
+        };
+
+        let grp = make_test_group(Some(true), Some(0.003), None, Some(0.85));
+        let resolved = TokenByCreditConfig::resolve(None, Some(&grp), &global_tbc);
+
+        assert!(resolved.enabled, "Group should enable token_by_credit even if global is false");
+        assert_eq!(resolved.credit_price, 0.003);
+        assert!(resolved.simulated_cache_enabled, "Simulated cache should be active when cache_ratio is set");
+        assert_eq!(resolved.simulated_cache_ratio, 0.85);
+    }
+
+    #[test]
+    fn test_global_disabled_key_enabled_works() {
+        let global_tbc = TokenByCreditState {
+            enabled: false,
+            credit_price: 0.002,
+            models_dev_url: "https://models.dev/api.json".to_string(),
+            pricing_refresh_hours: 24,
+            simulated_cache_enabled: false,
+            simulated_cache_ratio: 0.8,
+        };
+
+        let key = make_test_key(Some(true), None, None, None);
+        let grp = make_test_group(None, None, None, None);
+        let resolved = TokenByCreditConfig::resolve(Some(&key), Some(&grp), &global_tbc);
+
+        assert!(resolved.enabled, "Key should enable token_by_credit even if group and global are false");
+        assert_eq!(resolved.credit_price, 0.002, "Should fallback to global default price");
+        assert!(!resolved.simulated_cache_enabled, "Cache simulation should remain false if not configured");
+    }
+
+    #[test]
+    fn test_group_explicitly_disables_cache() {
+        let global_tbc = TokenByCreditState {
+            enabled: true,
+            credit_price: 0.002,
+            models_dev_url: "https://models.dev/api.json".to_string(),
+            pricing_refresh_hours: 24,
+            simulated_cache_enabled: true,
+            simulated_cache_ratio: 0.8,
+        };
+
+        let grp = make_test_group(Some(true), None, Some(false), Some(0.9));
+        let resolved = TokenByCreditConfig::resolve(None, Some(&grp), &global_tbc);
+
+        assert!(resolved.enabled);
+        assert!(!resolved.simulated_cache_enabled, "Explicit false on group should override global true");
+    }
+
+    #[test]
+    fn test_key_overrides_group() {
+        let global_tbc = TokenByCreditState::default();
+
+        let grp = make_test_group(Some(true), Some(0.003), Some(true), Some(0.7));
+        let key = make_test_key(Some(false), Some(0.005), Some(false), Some(0.95));
+
+        let resolved = TokenByCreditConfig::resolve(Some(&key), Some(&grp), &global_tbc);
+        assert!(!resolved.enabled, "Key should override group enabled");
+        assert_eq!(resolved.credit_price, 0.005, "Key should override group price");
+        assert!(!resolved.simulated_cache_enabled, "Key should override group cache enabled");
+        assert_eq!(resolved.simulated_cache_ratio, 0.95, "Key should override group cache ratio");
+    }
+
+    #[test]
+    fn test_invalid_price_falls_back() {
+        let global_tbc = TokenByCreditState {
+            enabled: false,
+            credit_price: 0.0,
+            models_dev_url: "https://models.dev/api.json".to_string(),
+            pricing_refresh_hours: 24,
+            simulated_cache_enabled: false,
+            simulated_cache_ratio: 0.8,
+        };
+
+        let grp = make_test_group(Some(true), Some(-1.0), None, None);
+        let resolved = TokenByCreditConfig::resolve(None, Some(&grp), &global_tbc);
+
+        assert_eq!(resolved.credit_price, 0.002, "Non-positive price should fallback to 0.002");
+    }
 }

@@ -1114,6 +1114,8 @@ fn key_to_item(k: &super::client_keys::ClientKey) -> ClientKeyItem {
         is_system: k.is_system,
         token_by_credit_enabled: k.token_by_credit_enabled,
         credit_price: k.credit_price,
+        simulated_cache_enabled: k.simulated_cache_enabled,
+        simulated_cache_ratio: k.simulated_cache_ratio,
     }
 }
 
@@ -1284,12 +1286,20 @@ pub async fn create_client_key(
     if let Some(v) = payload.max_credits {
         state.client_keys.set_max_credits(entry.id, Some(v));
     }
-    if payload.token_by_credit_enabled.is_some() || payload.credit_price.is_some() {
+    if payload.token_by_credit_enabled.is_some()
+        || payload.credit_price.is_some()
+        || payload.simulated_cache_enabled.is_some()
+        || payload.simulated_cache_ratio.is_some()
+    {
         state.client_keys.update_token_by_credit(
             entry.id,
             payload.token_by_credit_enabled,
             false,
             payload.credit_price,
+            false,
+            payload.simulated_cache_enabled,
+            false,
+            payload.simulated_cache_ratio,
             false,
         );
     }
@@ -1392,13 +1402,27 @@ pub async fn update_client_key(
     {
         let reset_enabled = payload.reset_token_by_credit.unwrap_or(false);
         let reset_price = payload.reset_credit_price.unwrap_or(false);
-        if payload.token_by_credit_enabled.is_some() || reset_enabled || payload.credit_price.is_some() || reset_price {
+        let reset_cache = payload.reset_simulated_cache.unwrap_or(false);
+        let reset_cache_ratio = payload.reset_simulated_cache_ratio.unwrap_or(false) || reset_cache;
+        if payload.token_by_credit_enabled.is_some()
+            || reset_enabled
+            || payload.credit_price.is_some()
+            || reset_price
+            || payload.simulated_cache_enabled.is_some()
+            || reset_cache
+            || payload.simulated_cache_ratio.is_some()
+            || reset_cache_ratio
+        {
             state.client_keys.update_token_by_credit(
                 id,
                 payload.token_by_credit_enabled,
                 reset_enabled,
                 payload.credit_price,
                 reset_price,
+                payload.simulated_cache_enabled,
+                reset_cache,
+                payload.simulated_cache_ratio,
+                reset_cache_ratio,
             );
         }
         Json(SuccessResponse::new(format!("Key #{} 已更新", id))).into_response()
@@ -2142,6 +2166,8 @@ fn group_to_item(g: &super::groups::Group, state: &AdminState) -> super::types::
         client_key_count: state.client_keys.count_with_group(&g.name),
         token_by_credit_enabled: g.token_by_credit_enabled,
         credit_price: g.credit_price,
+        simulated_cache_enabled: g.simulated_cache_enabled,
+        simulated_cache_ratio: g.simulated_cache_ratio,
         references: g.references.clone(),
         referenced_by,
     }
@@ -2210,6 +2236,8 @@ pub async fn create_group(
         payload.description,
         payload.token_by_credit_enabled,
         payload.credit_price,
+        payload.simulated_cache_enabled,
+        payload.simulated_cache_ratio,
         payload.references.unwrap_or_default(),
     ) {
         Ok(g) => {
@@ -2321,16 +2349,30 @@ pub async fn update_group(
         }
     }
 
-    // 3. 改积分返回 Token 配置
+    // 3. 改积分返回 Token 与模拟缓存配置
     let reset_enabled = payload.reset_token_by_credit.unwrap_or(false);
     let reset_price = payload.reset_credit_price.unwrap_or(false);
-    if payload.token_by_credit_enabled.is_some() || reset_enabled || payload.credit_price.is_some() || reset_price {
+    let reset_cache = payload.reset_simulated_cache.unwrap_or(false);
+    let reset_cache_ratio = payload.reset_simulated_cache_ratio.unwrap_or(false) || reset_cache;
+    if payload.token_by_credit_enabled.is_some()
+        || reset_enabled
+        || payload.credit_price.is_some()
+        || reset_price
+        || payload.simulated_cache_enabled.is_some()
+        || reset_cache
+        || payload.simulated_cache_ratio.is_some()
+        || reset_cache_ratio
+    {
         if let Err(e) = state.groups.update_token_by_credit(
             &current_name,
             payload.token_by_credit_enabled,
             reset_enabled,
             payload.credit_price,
             reset_price,
+            payload.simulated_cache_enabled,
+            reset_cache,
+            payload.simulated_cache_ratio,
+            reset_cache_ratio,
         ) {
             return (
                 StatusCode::BAD_REQUEST,

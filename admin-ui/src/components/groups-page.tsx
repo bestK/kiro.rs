@@ -769,6 +769,8 @@ export function GroupsPage() {
   const [createDesc, setCreateDesc] = useState('')
   const [createCreditMode, setCreateCreditMode] = useState<'inherit' | 'enabled' | 'disabled'>('inherit')
   const [createCreditPrice, setCreateCreditPrice] = useState('')
+  const [createCacheMode, setCreateCacheMode] = useState<'inherit' | 'custom' | 'disabled'>('inherit')
+  const [createCacheRatio, setCreateCacheRatio] = useState('80')
   const [createReferences, setCreateReferences] = useState<GroupReference[]>([])
   const [createFilterEnabled, setCreateFilterEnabled] = useState(false)
   const [createFilter, setCreateFilter] = useState<CredentialFilterCriteria>({ expiryWindow: '3d' })
@@ -782,6 +784,8 @@ export function GroupsPage() {
   const [editDesc, setEditDesc] = useState('')
   const [editCreditMode, setEditCreditMode] = useState<'inherit' | 'enabled' | 'disabled'>('inherit')
   const [editCreditPrice, setEditCreditPrice] = useState('')
+  const [editCacheMode, setEditCacheMode] = useState<'inherit' | 'custom' | 'disabled'>('inherit')
+  const [editCacheRatio, setEditCacheRatio] = useState('80')
   const [editReferences, setEditReferences] = useState<GroupReference[]>([])
 
   const [batchDeleting, setBatchDeleting] = useState(false)
@@ -820,6 +824,8 @@ export function GroupsPage() {
     setCreateDesc('')
     setCreateCreditMode('inherit')
     setCreateCreditPrice('')
+    setCreateCacheMode('inherit')
+    setCreateCacheRatio('80')
     setCreateReferences([])
     setCreateFilterEnabled(false)
     setCreateFilter({ expiryWindow: '3d' })
@@ -837,6 +843,11 @@ export function GroupsPage() {
       toast.error('每积分单价必须是非负数')
       return
     }
+    const cacheRatioNum = Number(createCacheRatio)
+    if (createCreditMode === 'enabled' && createCacheMode === 'custom' && (!Number.isFinite(cacheRatioNum) || cacheRatioNum <= 0 || cacheRatioNum >= 100)) {
+      toast.error('缓存命中率必须在 1% 到 99% 之间')
+      return
+    }
     try {
       await createGroup.mutateAsync({
         name,
@@ -844,6 +855,18 @@ export function GroupsPage() {
         tokenByCreditEnabled:
           createCreditMode === 'enabled' ? true : createCreditMode === 'disabled' ? false : undefined,
         creditPrice: Number.isFinite(priceNum) ? priceNum : undefined,
+        simulatedCacheEnabled:
+          createCreditMode === 'enabled'
+            ? createCacheMode === 'custom'
+              ? true
+              : createCacheMode === 'disabled'
+              ? false
+              : undefined
+            : undefined,
+        simulatedCacheRatio:
+          createCreditMode === 'enabled' && createCacheMode === 'custom' && Number.isFinite(cacheRatioNum)
+            ? cacheRatioNum / 100
+            : undefined,
         references: createReferences.length > 0 ? createReferences : undefined,
         autoAssignFilter: createFilterEnabled ? createFilter : undefined,
       })
@@ -863,6 +886,16 @@ export function GroupsPage() {
       g.tokenByCreditEnabled === true ? 'enabled' : g.tokenByCreditEnabled === false ? 'disabled' : 'inherit'
     )
     setEditCreditPrice(g.creditPrice != null ? String(g.creditPrice) : '')
+    setEditCacheMode(
+      g.simulatedCacheEnabled === false
+        ? 'disabled'
+        : g.simulatedCacheEnabled === true || g.simulatedCacheRatio != null
+        ? 'custom'
+        : 'inherit'
+    )
+    setEditCacheRatio(
+      g.simulatedCacheRatio != null ? String(Math.round(g.simulatedCacheRatio * 100)) : '80'
+    )
     setEditReferences(g.references ? JSON.parse(JSON.stringify(g.references)) : [])
     setEditOpen(true)
   }
@@ -879,6 +912,11 @@ export function GroupsPage() {
       toast.error('每积分单价必须是非负数')
       return
     }
+    const cacheRatioNum = Number(editCacheRatio)
+    if (editCreditMode === 'enabled' && editCacheMode === 'custom' && (!Number.isFinite(cacheRatioNum) || cacheRatioNum <= 0 || cacheRatioNum >= 100)) {
+      toast.error('缓存命中率必须在 1% 到 99% 之间')
+      return
+    }
     try {
       await updateGroup.mutateAsync({
         name: editTarget.name,
@@ -890,6 +928,22 @@ export function GroupsPage() {
           resetTokenByCredit: editCreditMode === 'inherit' ? true : undefined,
           creditPrice: Number.isFinite(priceNum) ? priceNum : undefined,
           resetCreditPrice: editCreditPrice.trim() === '' ? true : undefined,
+          simulatedCacheEnabled:
+            editCreditMode === 'disabled'
+              ? undefined
+              : editCacheMode === 'custom'
+              ? true
+              : editCacheMode === 'disabled'
+              ? false
+              : undefined,
+          resetSimulatedCache:
+            editCreditMode === 'disabled' || editCacheMode === 'inherit' ? true : undefined,
+          simulatedCacheRatio:
+            editCreditMode !== 'disabled' && editCacheMode === 'custom' && Number.isFinite(cacheRatioNum)
+              ? cacheRatioNum / 100
+              : undefined,
+          resetSimulatedCacheRatio:
+            editCreditMode === 'disabled' || editCacheMode !== 'custom' ? true : undefined,
           references: editReferences,
         },
       })
@@ -1125,24 +1179,46 @@ export function GroupsPage() {
         cell: (g) => {
           if (g.tokenByCreditEnabled === true) {
             const kPrice = g.creditPrice != null ? +(g.creditPrice * 1000).toFixed(4) : null
+            const cacheText =
+              g.simulatedCacheEnabled === false
+                ? '无缓存拆分'
+                : g.simulatedCacheRatio != null
+                ? `${Math.round(g.simulatedCacheRatio * 100)}% 缓存`
+                : g.simulatedCacheEnabled === true
+                ? '模拟缓存'
+                : '缓存随全局'
             return (
-              <Badge
-                variant="outline"
-                className="border-emerald-500/40 text-emerald-600 bg-emerald-500/10 font-normal"
-                title={
-                  g.creditPrice != null
-                    ? `专属单价：$${kPrice}/千分 (折合 $${g.creditPrice}/积分)`
-                    : '跟随全局单价'
-                }
-              >
-                按积分 {kPrice != null ? `($${kPrice}/千分)` : ''}
-              </Badge>
+              <div className="flex flex-col gap-1 items-start">
+                <Badge
+                  variant="outline"
+                  className="border-emerald-500/40 text-emerald-600 bg-emerald-500/10 font-normal"
+                  title={
+                    g.creditPrice != null
+                      ? `专属单价：$${kPrice}/千分 (折合 $${g.creditPrice}/积分)`
+                      : '跟随全局单价'
+                  }
+                >
+                  按积分 {kPrice != null ? `($${kPrice}/千分)` : ''}
+                </Badge>
+                <span className="text-[11px] text-muted-foreground">
+                  {cacheText}
+                </span>
+              </div>
             )
           }
           if (g.tokenByCreditEnabled === false) {
             return <Badge variant="secondary" className="text-muted-foreground font-normal">真实用量</Badge>
           }
-          return <span className="text-xs text-muted-foreground">跟随全局</span>
+          return (
+            <div className="flex flex-col gap-0.5 items-start">
+              <span className="text-xs text-muted-foreground">跟随全局</span>
+              {g.simulatedCacheRatio != null && (
+                <span className="text-[10px] text-muted-foreground">
+                  缓存 {Math.round(g.simulatedCacheRatio * 100)}%
+                </span>
+              )}
+            </div>
+          )
         },
       },
       {
@@ -1460,14 +1536,89 @@ export function GroupsPage() {
                 </p>
               </div>
               {createCreditMode === 'enabled' && (
-                <div className="space-y-1.5">
-                  <label className="text-sm font-medium">专属计费单价</label>
-                  <CreditPriceInput
-                    value={createCreditPrice}
-                    onChange={setCreateCreditPrice}
-                    disabled={createGroup.isPending}
-                  />
-                </div>
+                <>
+                  <div className="space-y-1.5">
+                    <label className="text-sm font-medium">专属计费单价</label>
+                    <CreditPriceInput
+                      value={createCreditPrice}
+                      onChange={setCreateCreditPrice}
+                      disabled={createGroup.isPending}
+                    />
+                  </div>
+
+                  <div className="space-y-2 pt-1 border-t">
+                    <div className="space-y-1">
+                      <label className="text-sm font-medium">模拟 Prompt 缓存策略</label>
+                      <div className="grid grid-cols-3 gap-2">
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant={createCacheMode === 'inherit' ? 'default' : 'outline'}
+                          className="text-xs"
+                          onClick={() => setCreateCacheMode('inherit')}
+                        >
+                          跟随全局
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant={createCacheMode === 'custom' ? 'default' : 'outline'}
+                          className="text-xs"
+                          onClick={() => setCreateCacheMode('custom')}
+                        >
+                          自定义缓存率
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant={createCacheMode === 'disabled' ? 'default' : 'outline'}
+                          className="text-xs"
+                          onClick={() => setCreateCacheMode('disabled')}
+                        >
+                          禁用缓存模拟
+                        </Button>
+                      </div>
+                      <p className="text-[11px] text-muted-foreground">
+                        {createCacheMode === 'inherit' && '沿用全局设置中的模拟缓存开关及命中率配置。'}
+                        {createCacheMode === 'custom' && '将输入 Token 按指定比例模拟拆分为普通输入与缓存读取，下游计费总额绝对恒等（0 误差）。'}
+                        {createCacheMode === 'disabled' && '不模拟拆分缓存，所有输入用量均作为普通 input_tokens 返回。'}
+                      </p>
+                    </div>
+
+                    {createCacheMode === 'custom' && (
+                      <div className="space-y-1.5 pl-0.5">
+                        <label className="text-xs font-medium text-muted-foreground">专属缓存命中率 (%)</label>
+                        <div className="flex items-center gap-2">
+                          <Input
+                            type="number"
+                            min={1}
+                            max={99}
+                            value={createCacheRatio}
+                            onChange={(e) => setCreateCacheRatio(e.target.value)}
+                            className="w-24 text-xs h-8"
+                            disabled={createGroup.isPending}
+                          />
+                          <span className="text-xs text-muted-foreground">%</span>
+                          <div className="flex items-center gap-1">
+                            {[50, 70, 80, 90].map((preset) => (
+                              <Button
+                                key={preset}
+                                type="button"
+                                size="sm"
+                                variant={createCacheRatio === String(preset) ? 'secondary' : 'ghost'}
+                                className="h-7 px-2 text-xs"
+                                onClick={() => setCreateCacheRatio(String(preset))}
+                                disabled={createGroup.isPending}
+                              >
+                                {preset}%
+                              </Button>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </>
               )}
             </div>
             <DialogFooter>
@@ -1558,14 +1709,89 @@ export function GroupsPage() {
                 </p>
               </div>
               {editCreditMode === 'enabled' && (
-                <div className="space-y-1.5">
-                  <label className="text-sm font-medium">专属计费单价</label>
-                  <CreditPriceInput
-                    value={editCreditPrice}
-                    onChange={setEditCreditPrice}
-                    disabled={updateGroup.isPending}
-                  />
-                </div>
+                <>
+                  <div className="space-y-1.5">
+                    <label className="text-sm font-medium">专属计费单价</label>
+                    <CreditPriceInput
+                      value={editCreditPrice}
+                      onChange={setEditCreditPrice}
+                      disabled={updateGroup.isPending}
+                    />
+                  </div>
+
+                  <div className="space-y-2 pt-1 border-t">
+                    <div className="space-y-1">
+                      <label className="text-sm font-medium">模拟 Prompt 缓存策略</label>
+                      <div className="grid grid-cols-3 gap-2">
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant={editCacheMode === 'inherit' ? 'default' : 'outline'}
+                          className="text-xs"
+                          onClick={() => setEditCacheMode('inherit')}
+                        >
+                          跟随全局
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant={editCacheMode === 'custom' ? 'default' : 'outline'}
+                          className="text-xs"
+                          onClick={() => setEditCacheMode('custom')}
+                        >
+                          自定义缓存率
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant={editCacheMode === 'disabled' ? 'default' : 'outline'}
+                          className="text-xs"
+                          onClick={() => setEditCacheMode('disabled')}
+                        >
+                          禁用缓存模拟
+                        </Button>
+                      </div>
+                      <p className="text-[11px] text-muted-foreground">
+                        {editCacheMode === 'inherit' && '沿用全局设置中的模拟缓存开关及命中率配置。'}
+                        {editCacheMode === 'custom' && '将输入 Token 按指定比例模拟拆分为普通输入与缓存读取，下游计费总额绝对恒等（0 误差）。'}
+                        {editCacheMode === 'disabled' && '不模拟拆分缓存，所有输入用量均作为普通 input_tokens 返回。'}
+                      </p>
+                    </div>
+
+                    {editCacheMode === 'custom' && (
+                      <div className="space-y-1.5 pl-0.5">
+                        <label className="text-xs font-medium text-muted-foreground">专属缓存命中率 (%)</label>
+                        <div className="flex items-center gap-2">
+                          <Input
+                            type="number"
+                            min={1}
+                            max={99}
+                            value={editCacheRatio}
+                            onChange={(e) => setEditCacheRatio(e.target.value)}
+                            className="w-24 text-xs h-8"
+                            disabled={updateGroup.isPending}
+                          />
+                          <span className="text-xs text-muted-foreground">%</span>
+                          <div className="flex items-center gap-1">
+                            {[50, 70, 80, 90].map((preset) => (
+                              <Button
+                                key={preset}
+                                type="button"
+                                size="sm"
+                                variant={editCacheRatio === String(preset) ? 'secondary' : 'ghost'}
+                                className="h-7 px-2 text-xs"
+                                onClick={() => setEditCacheRatio(String(preset))}
+                                disabled={updateGroup.isPending}
+                              >
+                                {preset}%
+                              </Button>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </>
               )}
               {editTarget && (editTarget.credentialCount > 0 || editTarget.clientKeyCount > 0 || (editTarget.referencedBy?.length ?? 0) > 0) && (
                 <p className="text-xs text-amber-600">

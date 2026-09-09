@@ -68,6 +68,12 @@ pub struct Group {
     /// 该分组 1 积分对应的金额（None 表示继承全局配置）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub credit_price: Option<f64>,
+    /// 是否开启模拟 Prompt 缓存拆分（None 表示继承全局）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub simulated_cache_enabled: Option<bool>,
+    /// 模拟 Prompt 缓存命中率（None 表示继承全局，范围 0.01..0.99）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub simulated_cache_ratio: Option<f64>,
     /// 引用的其他分组列表
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub references: Vec<GroupReference>,
@@ -172,6 +178,8 @@ impl GroupManager {
         description: Option<String>,
         token_by_credit_enabled: Option<bool>,
         credit_price: Option<f64>,
+        simulated_cache_enabled: Option<bool>,
+        simulated_cache_ratio: Option<f64>,
         references: Vec<GroupReference>,
     ) -> anyhow::Result<Group> {
         let trimmed = name.trim();
@@ -193,6 +201,8 @@ impl GroupManager {
             created_at: Utc::now().to_rfc3339(),
             token_by_credit_enabled,
             credit_price,
+            simulated_cache_enabled,
+            simulated_cache_ratio,
             references,
         };
         inner.entries.insert(group.name.clone(), group.clone());
@@ -208,7 +218,15 @@ impl GroupManager {
         token_by_credit_enabled: Option<bool>,
         credit_price: Option<f64>,
     ) -> anyhow::Result<Group> {
-        self.create_with_options(name, description, token_by_credit_enabled, credit_price, Vec::new())
+        self.create_with_options(
+            name,
+            description,
+            token_by_credit_enabled,
+            credit_price,
+            None,
+            None,
+            Vec::new(),
+        )
     }
 
     /// 创建分组。重名直接报错，不会静默覆盖（避免误创建丢备注）
@@ -217,7 +235,7 @@ impl GroupManager {
         self.create_with_pricing(name, description, None, None)
     }
 
-    /// 更新积分返回 Token 配置
+    /// 更新积分返回 Token 及缓存模拟配置
     pub fn update_token_by_credit(
         &self,
         name: &str,
@@ -225,6 +243,10 @@ impl GroupManager {
         reset_enabled: bool,
         credit_price: Option<f64>,
         reset_price: bool,
+        simulated_cache_enabled: Option<bool>,
+        reset_simulated_cache: bool,
+        simulated_cache_ratio: Option<f64>,
+        reset_simulated_cache_ratio: bool,
     ) -> anyhow::Result<Group> {
         let mut inner = self.inner.write();
         let entry = inner
@@ -240,6 +262,16 @@ impl GroupManager {
             entry.credit_price = None;
         } else if credit_price.is_some() {
             entry.credit_price = credit_price;
+        }
+        if reset_simulated_cache {
+            entry.simulated_cache_enabled = None;
+        } else if simulated_cache_enabled.is_some() {
+            entry.simulated_cache_enabled = simulated_cache_enabled;
+        }
+        if reset_simulated_cache_ratio || reset_simulated_cache {
+            entry.simulated_cache_ratio = None;
+        } else if simulated_cache_ratio.is_some() {
+            entry.simulated_cache_ratio = simulated_cache_ratio;
         }
         let cloned = entry.clone();
         self.save_locked(&inner);
@@ -472,6 +504,8 @@ impl GroupManager {
                         created_at: now.clone(),
                         token_by_credit_enabled: None,
                         credit_price: None,
+                        simulated_cache_enabled: None,
+                        simulated_cache_ratio: None,
                         references: Vec::new(),
                     },
                 );

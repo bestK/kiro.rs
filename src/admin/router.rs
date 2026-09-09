@@ -18,6 +18,7 @@ use super::{
         get_account_throttle_config, get_all_credentials,
         get_credential_balance, get_credential_metadata_schema, get_credential_models,
         get_current_models, get_global_proxy, get_custom_models, get_custom_headers,
+        get_newapi_config, set_newapi_config, test_newapi_config,
         get_cache_metering_config, get_session_affinity_config,
         get_token_by_credit_config, set_token_by_credit_config,
         verify_downstream_billing, get_billing_verifications, clear_billing_verifications,
@@ -177,6 +178,11 @@ pub fn create_admin_router(state: AdminState) -> Router {
             "/config/custom-headers",
             get(get_custom_headers).put(set_custom_headers),
         )
+        .route(
+            "/config/newapi",
+            get(get_newapi_config).put(set_newapi_config),
+        )
+        .route("/config/newapi/test", post(test_newapi_config))
         .route(
             "/config/update",
             get(get_update_config).put(set_update_config),

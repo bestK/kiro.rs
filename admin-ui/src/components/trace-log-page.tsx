@@ -356,15 +356,109 @@ function TokensCell({ rec }: { rec: TraceRecord }) {
   )
 }
 
-/** 费用单元格 */
+/** 费用与盈亏单元格（换行显示，红盈绿亏，hover 查看详细核算） */
 function CostCell({ rec }: { rec: TraceRecord }) {
-  if (rec.credits == null || rec.credits <= 0) {
+  const credits = rec.credits ?? 0
+  const hasCredits = credits > 0
+  const profit = rec.downstreamProfit
+  const revenue = rec.downstreamRevenue
+  const cost = rec.downstreamCost
+  const quota = rec.downstreamQuota
+  const status = rec.downstreamStatus
+
+  if (!hasCredits && profit == null && status !== 'found') {
     return <span className="text-xs text-gray-400 dark:text-gray-500 font-mono">-</span>
   }
+
+  // 红盈绿亏：盈利为正显示红色，亏损为负显示绿色，零为中性灰色
+  const isProfit = profit != null && profit > 0
+  const isLoss = profit != null && profit < 0
+  const profitColor = isProfit
+    ? 'text-rose-600 dark:text-rose-400'
+    : isLoss
+      ? 'text-emerald-600 dark:text-emerald-400'
+      : 'text-gray-500 dark:text-gray-400'
+
+  const profitSign = isProfit ? '+' : isLoss ? '-' : ''
+  const profitText = profit != null ? `${profitSign}¥${Math.abs(profit).toFixed(4)}` : null
+
+  const content = (
+    <div className="space-y-0.5 text-xs font-mono">
+      {/* 第一行：上游计费（credits） */}
+      <div className="flex items-center gap-1">
+        <span className="font-medium text-gray-900 dark:text-white tabular-nums">
+          ${credits.toFixed(4)}
+        </span>
+      </div>
+
+      {/* 第二行：换行显示盈亏（红盈绿亏）与收入 */}
+      {profitText ? (
+        <div className={cn('text-[11px] font-semibold tabular-nums cursor-help flex items-center gap-0.5', profitColor)}>
+          <span>{isProfit ? '盈' : isLoss ? '亏' : '平'}</span>
+          <span>{profitText}</span>
+        </div>
+      ) : status === 'not_found' ? (
+        <div className="text-[10px] text-muted-foreground/50 font-sans">
+          未关联下游
+        </div>
+      ) : null}
+    </div>
+  )
+
+  if (profit == null && status !== 'found') {
+    return content
+  }
+
   return (
-    <span className="text-xs font-medium text-emerald-600 dark:text-emerald-400 font-mono tabular-nums">
-      ${rec.credits.toFixed(4)}
-    </span>
+    <Tooltip>
+      <TooltipTrigger asChild>{content}</TooltipTrigger>
+      <TooltipContent
+        side="top"
+        className="whitespace-nowrap rounded-lg border border-gray-700 bg-gray-900 px-3.5 py-2.5 text-xs text-white shadow-xl dark:border-gray-600 dark:bg-gray-800 z-50"
+      >
+        <div className="space-y-1.5 min-w-[220px]">
+          <div className="text-xs font-semibold text-gray-300 mb-1 border-b border-gray-700 pb-1 flex items-center justify-between">
+            <span>费用与盈亏核算</span>
+            <span className="text-[10px] text-emerald-400 font-normal">已缓存本地</span>
+          </div>
+          <div className="flex items-center justify-between gap-4 font-mono">
+            <span className="text-gray-400 font-sans">上游消费</span>
+            <span className="font-medium text-white">${credits.toFixed(4)}</span>
+          </div>
+          {cost != null && (
+            <div className="flex items-center justify-between gap-4 font-mono">
+              <span className="text-gray-400 font-sans">采购成本</span>
+              <span className="font-medium text-amber-300">¥{cost.toFixed(6)}</span>
+            </div>
+          )}
+          {revenue != null && (
+            <div className="flex items-center justify-between gap-4 font-mono">
+              <span className="text-gray-400 font-sans">下游收入</span>
+              <span className="font-medium text-sky-300">
+                ¥{revenue.toFixed(6)}
+                {quota != null ? ` (${quota.toLocaleString()} 额度)` : ''}
+              </span>
+            </div>
+          )}
+          {profit != null && (
+            <div className="flex items-center justify-between gap-4 border-t border-gray-700 pt-1.5 font-mono">
+              <span className="text-gray-400 font-sans">净盈亏</span>
+              <span className={cn('font-bold', profitColor)}>
+                {profitText} ({isProfit ? '盈利' : isLoss ? '亏损' : '持平'})
+              </span>
+            </div>
+          )}
+          {(rec.downstreamUsername || rec.downstreamTokenName) && (
+            <div className="flex items-center justify-between gap-4 pt-0.5 text-[11px] text-gray-400">
+              <span className="font-sans">下游用户</span>
+              <span className="font-mono text-gray-300 truncate max-w-[140px]">
+                {rec.downstreamUsername || '-'}{rec.downstreamTokenName ? ` / ${rec.downstreamTokenName}` : ''}
+              </span>
+            </div>
+          )}
+        </div>
+      </TooltipContent>
+    </Tooltip>
   )
 }
 

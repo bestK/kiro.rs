@@ -60,6 +60,8 @@ use super::types::{
     FetchModelsRequest, FetchModelsResponse,
     FetchNewApiGroupsRequest, FetchNewApiGroupsResponse,
     CalculateProfitRequest, CalculateProfitResponse, ProfitModelBreakdown,
+    DownstreamNewApiConfigResponse, SetDownstreamNewApiConfigRequest,
+    TestNewApiConnectionRequest, TestNewApiConnectionResponse,
 };
 
 /// 余额缓存过期时间（秒），5 分钟
@@ -3071,6 +3073,121 @@ impl AdminService {
         }
 
         Ok(self.get_custom_headers())
+    }
+
+    /// 获取下游 NewAPI 配置
+    pub fn get_downstream_newapi_config(&self) -> DownstreamNewApiConfigResponse {
+        let cfg = &self.token_manager.config().downstream_new_api;
+        DownstreamNewApiConfigResponse {
+            enabled: cfg.enabled,
+            base_url: cfg.base_url.clone(),
+            admin_key: cfg.admin_key.clone(),
+            cost_per_credit: cfg.cost_per_credit,
+            quota_per_unit: cfg.quota_per_unit,
+        }
+    }
+
+    /// 设置并持久化下游 NewAPI 配置
+    pub fn set_downstream_newapi_config(
+        &self,
+        req: SetDownstreamNewApiConfigRequest,
+    ) -> Result<DownstreamNewApiConfigResponse, AdminServiceError> {
+        let base_url = req.base_url.trim().trim_end_matches('/').to_string();
+        let admin_key = req.admin_key.trim().to_string();
+        let cost_per_credit = if req.cost_per_credit > 0.0 {
+            req.cost_per_credit
+        } else {
+            0.08
+        };
+        let quota_per_unit = if req.quota_per_unit > 0.0 {
+            req.quota_per_unit
+        } else {
+            500_000.0
+        };
+
+        self.token_manager
+            .update_config_file(move |config| {
+                config.downstream_new_api = crate::model::downstream_newapi::DownstreamNewApiConfig {
+                    enabled: req.enabled,
+                    base_url,
+                    admin_key,
+                    cost_per_credit,
+                    quota_per_unit,
+                };
+            })
+            .map_err(|e| AdminServiceError::InternalError(e.to_string()))?;
+
+        Ok(self.get_downstream_newapi_config())
+    }
+
+    /// 测试与下游 NewAPI 的连接
+    pub async fn test_newapi_connection(
+        &self,
+        req: TestNewApiConnectionRequest,
+    ) -> TestNewApiConnectionResponse {
+        let base_url = req.base_url.trim().trim_end_matches('/');
+        if base_url.is_empty() {
+            return TestNewApiConnectionResponse {
+                success: false,
+                message: "NewAPI 地址不能为空".to_string(),
+            };
+        }
+        let admin_key = req.admin_key.trim();
+        if admin_key.is_empty() {
+            return TestNewApiConnectionResponse {
+                success: false,
+                message: "管理员令牌不能为空".to_string(),
+            };
+        }
+
+        let client = match reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(8))
+            .build()
+        {
+            Ok(c) => c,
+            Err(e) => {
+                return TestNewApiConnectionResponse {
+                    success: false,
+                    message: format!("创建 HTTP 客户端失败: {}", e),
+                };
+            }
+        };
+
+        let auth_header = if admin_key.starts_with("Bearer ") {
+            admin_key.to_string()
+        } else {
+            format!("Bearer {}", admin_key)
+        };
+
+        // 请求 NewAPI /api/log/?p=0&page_size=1
+        let test_url = format!("{}/api/log/?p=0&page_size=1", base_url);
+        match client.get(&test_url).header("Authorization", auth_header).send().await {
+            Ok(resp) => {
+                let status = resp.status();
+                if status.is_success() {
+                    TestNewApiConnectionResponse {
+                        success: true,
+                        message: "连接成功，管理员日志权限正常！".to_string(),
+                    }
+                } else if status.as_u16() == 401 || status.as_u16() == 403 {
+                    TestNewApiConnectionResponse {
+                        success: false,
+                        message: format!("鉴权失败 (HTTP {}): 请检查管理员密钥是否正确且具备管理员权限", status),
+                    }
+                } else {
+                    TestNewApiConnectionResponse {
+                        success: false,
+                        message: format!("NewAPI 返回错误状态码 HTTP {}", status),
+                    }
+                }
+            }
+            Err(e) => {
+                TestNewApiConnectionResponse {
+                    success: false,
+                    message: format!("请求 NewAPI 失败: {}", e),
+                }
+            }
+        }
     }
 
     /// 持久化新的登录API密钥（adminApiKey）到配置文件（内存中的 key 由 handler 层负责更新）

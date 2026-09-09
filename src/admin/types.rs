@@ -1952,3 +1952,42 @@ pub struct CalculateProfitResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
+
+/// 下游 NewAPI 配置响应
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DownstreamNewApiConfigResponse {
+    pub enabled: bool,
+    pub base_url: String,
+    pub admin_key: String,
+    pub cost_per_credit: f64,
+    pub quota_per_unit: f64,
+}
+
+/// 下游 NewAPI 配置请求
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetDownstreamNewApiConfigRequest {
+    pub enabled: bool,
+    pub base_url: String,
+    pub admin_key: String,
+    pub cost_per_credit: f64,
+    pub quota_per_unit: f64,
+}
+
+/// 下游 NewAPI 连接测试请求
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TestNewApiConnectionRequest {
+    pub base_url: String,
+    pub admin_key: String,
+}
+
+/// 下游 NewAPI 连接测试响应
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TestNewApiConnectionResponse {
+    pub success: bool,
+    pub message: String,
+}
+

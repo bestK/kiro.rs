@@ -52,6 +52,9 @@ import type {
   FetchNewApiGroupsResponse,
   CalculateProfitRequest,
   CalculateProfitResponse,
+  DownstreamNewApiConfig,
+  TestNewApiConnectionRequest,
+  TestNewApiConnectionResponse,
 } from '@/types/api'
 
 // 创建 axios 实例
@@ -860,5 +863,29 @@ export async function pollIdcRelogin(
   const { data } = await api.post<PollIdcLoginResponse>(
     `/credentials/${credentialId}/relogin/idc/poll/${sessionId}`
   )
+  return data
+}
+
+// 获取下游 NewAPI 配置
+export async function getNewApiConfig(): Promise<DownstreamNewApiConfig> {
+  const { data } = await api.get<DownstreamNewApiConfig>('/config/newapi')
+  return data
+}
+
+// 设置下游 NewAPI 配置
+export async function setNewApiConfig(
+  req: DownstreamNewApiConfig
+): Promise<DownstreamNewApiConfig> {
+  const { data } = await api.put<DownstreamNewApiConfig>('/config/newapi', req)
+  return data
+}
+
+// 测试下游 NewAPI 连接
+export async function testNewApiConnection(
+  req: TestNewApiConnectionRequest
+): Promise<TestNewApiConnectionResponse> {
+  const { data } = await api.post<TestNewApiConnectionResponse>('/config/newapi/test', req, {
+    timeout: 10000,
+  })
   return data
 }

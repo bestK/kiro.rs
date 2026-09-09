@@ -347,7 +347,18 @@ impl TraceStore {
         // session_id / client_ip 索引放在 migrate 里而不是 SCHEMA：老库补列之后才能建
         conn.execute_batch(
             "CREATE INDEX IF NOT EXISTS idx_traces_session ON traces(session_id);
-             CREATE INDEX IF NOT EXISTS idx_traces_client_ip ON traces(client_ip);",
+             CREATE INDEX IF NOT EXISTS idx_traces_client_ip ON traces(client_ip);
+             CREATE TABLE IF NOT EXISTS newapi_log_cache (
+                 trace_id      TEXT PRIMARY KEY,
+                 quota         INTEGER NOT NULL,
+                 user_amount   REAL NOT NULL,
+                 token_name    TEXT,
+                 username      TEXT,
+                 model_name    TEXT,
+                 queried_at    INTEGER NOT NULL,
+                 status        TEXT NOT NULL
+             );
+             CREATE INDEX IF NOT EXISTS idx_newapi_cache_queried_at ON newapi_log_cache(queried_at);",
         )?;
         // 老库 key_source 列首次添加后，按 key_id 语义回填：master apiKey (key_id=0) 之外都视为客户端 Key。
         if key_source_added {
@@ -680,6 +691,7 @@ impl TraceStore {
                  (SELECT trace_id FROM traces WHERE ts_epoch < ?1)",
                 [cutoff],
             )?;
+            let _ = tx.execute("DELETE FROM newapi_log_cache WHERE queried_at < ?1", [cutoff]);
             let n = tx.execute("DELETE FROM traces WHERE ts_epoch < ?1", [cutoff])?;
             Ok(n)
         })();
@@ -776,6 +788,86 @@ impl TraceStore {
         }
         out
     }
+
+    /// 批量从 SQLite 查询 NewAPI 日志缓存
+    pub fn get_newapi_cache_batch(&self, trace_ids: &[String]) -> std::collections::HashMap<String, NewApiLogCacheEntry> {
+        if trace_ids.is_empty() {
+            return std::collections::HashMap::new();
+        }
+        let conn = self.conn.lock();
+        let placeholders: Vec<&str> = trace_ids.iter().map(|_| "?").collect();
+        let sql = format!(
+            "SELECT trace_id, quota, user_amount, token_name, username, model_name, queried_at, status \
+             FROM newapi_log_cache WHERE trace_id IN ({})",
+            placeholders.join(",")
+        );
+        let mut stmt = match conn.prepare(&sql) {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!("prepare newapi_log_cache failed: {}", e);
+                return std::collections::HashMap::new();
+            }
+        };
+        let param_refs: Vec<&dyn rusqlite::ToSql> = trace_ids.iter().map(|id| id as &dyn rusqlite::ToSql).collect();
+        let rows = match stmt.query_map(param_refs.as_slice(), |row| {
+            Ok(NewApiLogCacheEntry {
+                trace_id: row.get(0)?,
+                quota: row.get(1)?,
+                user_amount: row.get(2)?,
+                token_name: row.get(3)?,
+                username: row.get(4)?,
+                model_name: row.get(5)?,
+                queried_at: row.get(6)?,
+                status: row.get(7)?,
+            })
+        }) {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!("query newapi_log_cache failed: {}", e);
+                return std::collections::HashMap::new();
+            }
+        };
+        let mut map = std::collections::HashMap::new();
+        for r in rows.flatten() {
+            map.insert(r.trace_id.clone(), r);
+        }
+        map
+    }
+
+    /// 批量存储/更新 NewAPI 日志缓存到 SQLite
+    pub fn save_newapi_cache_batch(&self, entries: &[NewApiLogCacheEntry]) {
+        if entries.is_empty() {
+            return;
+        }
+        let mut conn = self.conn.lock();
+        let tx = match conn.transaction() {
+            Ok(t) => t,
+            Err(e) => {
+                tracing::warn!("save_newapi_cache_batch transaction error: {}", e);
+                return;
+            }
+        };
+        for entry in entries {
+            let _ = tx.execute(
+                "INSERT OR REPLACE INTO newapi_log_cache \
+                 (trace_id, quota, user_amount, token_name, username, model_name, queried_at, status) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                rusqlite::params![
+                    entry.trace_id,
+                    entry.quota,
+                    entry.user_amount,
+                    entry.token_name,
+                    entry.username,
+                    entry.model_name,
+                    entry.queried_at,
+                    entry.status,
+                ],
+            );
+        }
+        if let Err(e) = tx.commit() {
+            tracing::warn!("save_newapi_cache_batch commit failed: {}", e);
+        }
+    }
 }
 
 /// 按凭据的失败分类计数（鉴权 / 账号风控 / 其他）
@@ -785,6 +877,21 @@ pub struct FailureStats {
     pub auth: u64,
     pub throttle: u64,
     pub other: u64,
+}
+
+/// 下游 NewAPI 日志本地数据库缓存条目
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NewApiLogCacheEntry {
+    pub trace_id: String,
+    pub quota: i64,
+    pub user_amount: f64,
+    pub token_name: Option<String>,
+    pub username: Option<String>,
+    pub model_name: Option<String>,
+    pub queried_at: i64,
+    /// 'found' 或 'not_found'
+    pub status: String,
 }
 
 /// 共享存储句柄
@@ -834,6 +941,18 @@ CREATE TABLE IF NOT EXISTS trace_attempts (
     PRIMARY KEY (trace_id, attempt)
 );
 CREATE INDEX IF NOT EXISTS idx_attempts_trace ON trace_attempts(trace_id);
+
+CREATE TABLE IF NOT EXISTS newapi_log_cache (
+    trace_id      TEXT PRIMARY KEY,
+    quota         INTEGER NOT NULL,
+    user_amount   REAL NOT NULL,
+    token_name    TEXT,
+    username      TEXT,
+    model_name    TEXT,
+    queried_at    INTEGER NOT NULL,
+    status        TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_newapi_cache_queried_at ON newapi_log_cache(queried_at);
 ";
 
 #[cfg(test)]
@@ -1417,5 +1536,51 @@ mod tests {
         // LIKE 元字符被转义：% 不再是通配符，不应匹配任何记录
         assert!(ids("%").is_empty(), "% 应按字面量处理");
         assert!(ids("_").is_empty(), "_ 应按字面量处理");
+    }
+
+    #[test]
+    fn test_newapi_log_cache_batch() {
+        let store = TraceStore::open_in_memory().unwrap();
+
+        let entries = vec![
+            NewApiLogCacheEntry {
+                trace_id: "trace-1".to_string(),
+                quota: 12927,
+                user_amount: 0.025854,
+                token_name: Some("test-token".to_string()),
+                username: Some("user-alice".to_string()),
+                model_name: Some("claude-3-7-sonnet".to_string()),
+                queried_at: 1700000000,
+                status: "found".to_string(),
+            },
+            NewApiLogCacheEntry {
+                trace_id: "trace-2".to_string(),
+                quota: 0,
+                user_amount: 0.0,
+                token_name: None,
+                username: None,
+                model_name: None,
+                queried_at: 1700000005,
+                status: "not_found".to_string(),
+            },
+        ];
+
+        store.save_newapi_cache_batch(&entries);
+
+        let query_ids = vec!["trace-1".to_string(), "trace-2".to_string(), "trace-3".to_string()];
+        let cached = store.get_newapi_cache_batch(&query_ids);
+
+        assert_eq!(cached.len(), 2);
+        let t1 = cached.get("trace-1").expect("trace-1 should be present");
+        assert_eq!(t1.quota, 12927);
+        assert!((t1.user_amount - 0.025854).abs() < 1e-6);
+        assert_eq!(t1.token_name.as_deref(), Some("test-token"));
+        assert_eq!(t1.status, "found");
+
+        let t2 = cached.get("trace-2").expect("trace-2 should be present");
+        assert_eq!(t2.status, "not_found");
+        assert_eq!(t2.quota, 0);
+
+        assert!(cached.get("trace-3").is_none());
     }
 }

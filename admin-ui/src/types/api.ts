@@ -696,6 +696,20 @@ export interface TraceRecord {
   usageSource?: UsageSource | null
   /** 客户端 IP（X-Forwarded-For / X-Real-IP 优先，回落到 TCP 对端）；老记录为 null */
   clientIp?: string | null
+  /** 下游 NewAPI 收入（人民币元） */
+  downstreamRevenue?: number | null
+  /** 上游成本（人民币元 = credits * costPerCredit） */
+  downstreamCost?: number | null
+  /** 盈亏金额（人民币元 = downstreamRevenue - downstreamCost） */
+  downstreamProfit?: number | null
+  /** 下游 NewAPI 消耗的 quota 点数 */
+  downstreamQuota?: number | null
+  /** 下游调用用户名 */
+  downstreamUsername?: string | null
+  /** 下游调用令牌名称 */
+  downstreamTokenName?: string | null
+  /** 下游记录匹配状态：found / not_found */
+  downstreamStatus?: 'found' | 'not_found' | null
   attempts: TraceAttempt[]
 }
 
@@ -1033,5 +1047,23 @@ export interface CalculateProfitResponse {
   sampledRequests: number
   modelBreakdowns: ProfitModelBreakdown[]
   error?: string
+}
+
+export interface DownstreamNewApiConfig {
+  enabled: boolean
+  baseUrl: string
+  adminKey: string
+  costPerCredit: number
+  quotaPerUnit: number
+}
+
+export interface TestNewApiConnectionRequest {
+  baseUrl: string
+  adminKey: string
+}
+
+export interface TestNewApiConnectionResponse {
+  success: boolean
+  message: string
 }
 

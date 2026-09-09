@@ -48,6 +48,9 @@ import {
   resetAllSuccessCount,
   getCredentialMetadataSchema,
   setCredentialMetadataSchema,
+  getNewApiConfig,
+  setNewApiConfig,
+  testNewApiConnection,
 } from '@/api/credentials'
 import type {
   AddCredentialRequest,
@@ -59,6 +62,8 @@ import type {
   UpdateRefreshTokenRequest,
   CredentialMetadataSchemaConfig,
   CredentialQueryParams,
+  DownstreamNewApiConfig,
+  TestNewApiConnectionRequest,
 } from '@/types/api'
 
 // 查询凭据列表（支持分页、搜索、过滤、排序）
@@ -533,3 +538,29 @@ export function useSetUpdateConfig() {
     },
   })
 }
+
+// 下游 NewAPI 配置
+export function useNewApiConfig() {
+  return useQuery({
+    queryKey: ['newapi-config'],
+    queryFn: getNewApiConfig,
+  })
+}
+
+export function useSetNewApiConfig() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (req: DownstreamNewApiConfig) => setNewApiConfig(req),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['newapi-config'] })
+      queryClient.invalidateQueries({ queryKey: ['traces'] })
+    },
+  })
+}
+
+export function useTestNewApiConnection() {
+  return useMutation({
+    mutationFn: (req: TestNewApiConnectionRequest) => testNewApiConnection(req),
+  })
+}
+

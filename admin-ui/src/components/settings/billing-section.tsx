@@ -24,6 +24,7 @@ import {
   Search,
   TrendingUp,
   Tag,
+  Globe,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -49,12 +50,14 @@ import { cn } from '@/lib/utils'
 import type { VerifyBillingResponse } from '@/types/api'
 import { ProfitCalculator } from '@/components/settings/profit-calculator'
 import { BillingRatioSimulator } from '@/components/settings/billing-ratio-simulator'
+import { DownstreamNewApiConfigCard } from '@/components/settings/downstream-newapi-config'
 import { FloatingSectionNav, type NavSectionItem } from '@/components/console/floating-section-nav'
 
 const BILLING_NAV_ITEMS: NavSectionItem[] = [
   { id: 'section-billing-global', title: '全局折算设置' },
   { id: 'section-billing-hierarchy', title: '分级覆盖规则' },
   { id: 'section-billing-estimate', title: '换算估算参考与在线验证' },
+  { id: 'section-billing-downstream-newapi', title: '下游 NewAPI 关联与盈亏回填' },
   { id: 'section-billing-profit', title: '利润测算与用量盈亏分析' },
   { id: 'section-billing-ratio', title: '下游计费口径与官方倍率模拟' },
 ]
@@ -1429,6 +1432,18 @@ export function BillingSection() {
               onResetPrice={handleResetHypoPrice}
             />
           </div>
+        </div>
+      </SettingGroup>
+
+      {/* 下游 NewAPI 关联与链路日志盈亏 */}
+      <SettingGroup
+        id="section-billing-downstream-newapi"
+        title="下游 NewAPI 关联与链路日志盈亏"
+        description="配置下游 NewAPI 的 Base URL 与管理员 Key，通过 upstream_request_id (Trace ID) 自动查询下游收取用户金额并在日志费用列展示盈亏（红盈绿亏），查询结果永久缓存至本地 SQLite 数据库。"
+        icon={<Globe className="h-4 w-4" />}
+      >
+        <div className="py-2">
+          <DownstreamNewApiConfigCard />
         </div>
       </SettingGroup>
 

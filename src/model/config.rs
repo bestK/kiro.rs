@@ -333,6 +333,10 @@ pub struct Config {
     #[serde(default = "crate::model::custom_headers::default_custom_headers")]
     pub custom_headers: Vec<crate::model::custom_headers::CustomHeaderRule>,
 
+    /// 下游 NewAPI 关联与盈亏配置
+    #[serde(default)]
+    pub downstream_new_api: crate::model::downstream_newapi::DownstreamNewApiConfig,
+
     /// 配置文件路径（运行时元数据，不写入 JSON）
     #[serde(skip)]
     config_path: Option<PathBuf>,
@@ -525,6 +529,7 @@ impl Default for Config {
             pricing_refresh_hours: default_pricing_refresh_hours(),
             simulated_cache_enabled: default_simulated_cache_enabled(),
             simulated_cache_ratio: default_simulated_cache_ratio(),
+            downstream_new_api: crate::model::downstream_newapi::DownstreamNewApiConfig::default(),
             config_path: None,
         }
     }

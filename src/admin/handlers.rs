@@ -39,6 +39,8 @@ use super::{
         FetchModelsRequest,
         FetchNewApiGroupsRequest,
         CalculateProfitRequest,
+        SetDownstreamNewApiConfigRequest,
+        TestNewApiConnectionRequest,
     },
     usage_stats::{Range, StatsGranularity, StatsQueryWindow},
 };
@@ -894,6 +896,34 @@ pub async fn set_custom_headers(
     }
 }
 
+/// GET /api/admin/config/newapi
+/// 获取下游 NewAPI 关联与盈亏配置
+pub async fn get_newapi_config(State(state): State<AdminState>) -> impl IntoResponse {
+    Json(state.service.get_downstream_newapi_config())
+}
+
+/// PUT /api/admin/config/newapi
+/// 修改下游 NewAPI 关联与盈亏配置
+pub async fn set_newapi_config(
+    State(state): State<AdminState>,
+    Json(payload): Json<SetDownstreamNewApiConfigRequest>,
+) -> impl IntoResponse {
+    match state.service.set_downstream_newapi_config(payload) {
+        Ok(response) => Json(response).into_response(),
+        Err(e) => (e.status_code(), Json(e.into_response())).into_response(),
+    }
+}
+
+/// POST /api/admin/config/newapi/test
+/// 测试与下游 NewAPI 的连接及管理员日志权限
+pub async fn test_newapi_config(
+    State(state): State<AdminState>,
+    Json(payload): Json<TestNewApiConnectionRequest>,
+) -> impl IntoResponse {
+    let resp = state.service.test_newapi_connection(payload).await;
+    Json(resp)
+}
+
 /// GET /api/admin/config/update
 /// 获取在线更新配置（不回显 GitHub Token 明文）
 pub async fn get_update_config(State(state): State<AdminState>) -> impl IntoResponse {
@@ -1712,6 +1742,83 @@ pub async fn stats_by_key(
     Json(enriched).into_response()
 }
 
+/// 查询单个 trace 关联的下游 NewAPI 日志记录
+async fn fetch_single_newapi_log(
+    client: &reqwest::Client,
+    base_url: &str,
+    admin_key: &str,
+    quota_per_unit: f64,
+    trace_id: String,
+) -> Option<crate::admin::trace_db::NewApiLogCacheEntry> {
+    let base_url = base_url.trim().trim_end_matches('/');
+    let url = format!(
+        "{}/api/log/?p=0&page_size=5&upstream_request_id={}",
+        base_url,
+        urlencoding::encode(&trace_id)
+    );
+    let auth_header = if admin_key.starts_with("Bearer ") {
+        admin_key.to_string()
+    } else {
+        format!("Bearer {}", admin_key)
+    };
+
+    let resp = client
+        .get(&url)
+        .header("Authorization", auth_header)
+        .send()
+        .await
+        .ok()?;
+
+    if !resp.status().is_success() {
+        return None;
+    }
+
+    let val: serde_json::Value = resp.json().await.ok()?;
+    let now = chrono::Utc::now().timestamp();
+
+    let items = val
+        .get("data")
+        .and_then(|d| d.get("items").or(Some(d)))
+        .and_then(|i| i.as_array())
+        .or_else(|| val.get("items").and_then(|i| i.as_array()));
+
+    if let Some(items) = items {
+        if let Some(first) = items.first() {
+            let quota = first.get("quota").and_then(|v| v.as_i64()).unwrap_or(0);
+            let user_amount = if quota_per_unit > 0.0 {
+                quota as f64 / quota_per_unit
+            } else {
+                quota as f64 / 500_000.0
+            };
+            let token_name = first.get("token_name").and_then(|v| v.as_str()).map(String::from);
+            let username = first.get("username").and_then(|v| v.as_str()).map(String::from);
+            let model_name = first.get("model_name").and_then(|v| v.as_str()).map(String::from);
+
+            return Some(crate::admin::trace_db::NewApiLogCacheEntry {
+                trace_id,
+                quota,
+                user_amount,
+                token_name,
+                username,
+                model_name,
+                queried_at: now,
+                status: "found".to_string(),
+            });
+        }
+    }
+
+    Some(crate::admin::trace_db::NewApiLogCacheEntry {
+        trace_id,
+        quota: 0,
+        user_amount: 0.0,
+        token_name: None,
+        username: None,
+        model_name: None,
+        queried_at: now,
+        status: "not_found".to_string(),
+    })
+}
+
 /// GET /api/admin/traces
 /// 查询请求链路追踪记录（含每跳明细）。
 /// query 参数：status / errorType / credentialId / keyId / group / model / onlyFailed /
@@ -1785,6 +1892,77 @@ pub async fn list_traces(
     };
     let (records, total) = state.trace_store.query_paged(&query);
 
+    // 下游 NewAPI 关联查询与本地 SQLite 缓存
+    let newapi_cfg = state.service.get_downstream_newapi_config();
+    let mut newapi_map: HashMap<String, crate::admin::trace_db::NewApiLogCacheEntry> = HashMap::new();
+
+    if newapi_cfg.enabled && !newapi_cfg.base_url.is_empty() && !newapi_cfg.admin_key.is_empty() {
+        let trace_ids: Vec<String> = records.iter().map(|r| r.trace_id.clone()).collect();
+        newapi_map = state.trace_store.get_newapi_cache_batch(&trace_ids);
+
+        let missing_ids: Vec<String> = trace_ids
+            .into_iter()
+            .filter(|id| !newapi_map.contains_key(id))
+            .collect();
+
+        if !missing_ids.is_empty() {
+            if let Ok(client) = reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(3))
+                .build()
+            {
+                let base_url = newapi_cfg.base_url.clone();
+                let admin_key = newapi_cfg.admin_key.clone();
+                let quota_per_unit = newapi_cfg.quota_per_unit;
+
+                let fetch_futures: Vec<_> = missing_ids
+                    .into_iter()
+                    .take(20)
+                    .map(|tid| {
+                        let c = client.clone();
+                        let b = base_url.clone();
+                        let k = admin_key.clone();
+                        async move {
+                            fetch_single_newapi_log(&c, &b, &k, quota_per_unit, tid).await
+                        }
+                    })
+                    .collect();
+
+                let fetched_entries: Vec<crate::admin::trace_db::NewApiLogCacheEntry> =
+                    futures::future::join_all(fetch_futures)
+                        .await
+                        .into_iter()
+                        .flatten()
+                        .collect();
+
+                if !fetched_entries.is_empty() {
+                    let now_ts = chrono::Utc::now().timestamp();
+                    let to_cache: Vec<crate::admin::trace_db::NewApiLogCacheEntry> = fetched_entries
+                        .iter()
+                        .filter(|entry| {
+                            if entry.status == "found" {
+                                true
+                            } else if let Some(rec) = records.iter().find(|r| r.trace_id == entry.trace_id) {
+                                let trace_ts = chrono::DateTime::parse_from_rfc3339(&rec.ts)
+                                    .map(|d| d.timestamp())
+                                    .unwrap_or(0);
+                                now_ts - trace_ts > 180
+                            } else {
+                                true
+                            }
+                        })
+                        .cloned()
+                        .collect();
+
+                    state.trace_store.save_newapi_cache_batch(&to_cache);
+
+                    for entry in fetched_entries {
+                        newapi_map.insert(entry.trace_id.clone(), entry);
+                    }
+                }
+            }
+        }
+    }
+
     // 附加 credential email 方便前端展示（与 stats_by_credential 一致）
     let snapshot = state.service.get_all_credentials();
     let email_map: HashMap<u64, Option<String>> = snapshot
@@ -1812,6 +1990,39 @@ pub async fn list_traces(
         .map(|r| {
             let final_email = email_map.get(&r.final_credential_id).cloned().flatten();
             let key_name = key_label(r.key_id);
+
+            let (
+                downstream_revenue,
+                downstream_cost,
+                downstream_profit,
+                downstream_quota,
+                downstream_username,
+                downstream_token_name,
+                downstream_status,
+            ) = if newapi_cfg.enabled {
+                if let Some(entry) = newapi_map.get(&r.trace_id) {
+                    if entry.status == "found" {
+                        let cost = r.credits * newapi_cfg.cost_per_credit;
+                        let profit = entry.user_amount - cost;
+                        (
+                            Some(entry.user_amount),
+                            Some(cost),
+                            Some(profit),
+                            Some(entry.quota),
+                            entry.username.clone(),
+                            entry.token_name.clone(),
+                            Some("found"),
+                        )
+                    } else {
+                        (None, None, None, None, None, None, Some("not_found"))
+                    }
+                } else {
+                    (None, None, None, None, None, None, None)
+                }
+            } else {
+                (None, None, None, None, None, None, None)
+            };
+
             // attempts 里每跳也附 email
             let attempts: Vec<serde_json::Value> = r
                 .attempts
@@ -1858,6 +2069,13 @@ pub async fn list_traces(
                 "previousCredentialId": r.previous_credential_id,
                 "usageSource": r.usage_source,
                 "clientIp": r.client_ip,
+                "downstreamRevenue": downstream_revenue,
+                "downstreamCost": downstream_cost,
+                "downstreamProfit": downstream_profit,
+                "downstreamQuota": downstream_quota,
+                "downstreamUsername": downstream_username,
+                "downstreamTokenName": downstream_token_name,
+                "downstreamStatus": downstream_status,
                 "attempts": attempts,
             })
         })

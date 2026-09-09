@@ -22,8 +22,13 @@ import {
 } from '@/hooks/use-credentials'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
+import { Dialog, DialogContent } from '@/components/ui/dialog'
 
-export function DownstreamNewApiConfigCard() {
+export function DownstreamNewApiConfigCard({
+  onSaved,
+}: {
+  onSaved?: () => void
+} = {}) {
   const { data: config, isLoading } = useNewApiConfig()
   const setConfigMutation = useSetNewApiConfig()
   const testConnectionMutation = useTestNewApiConnection()
@@ -90,6 +95,7 @@ export function DownstreamNewApiConfigCard() {
         quotaPerUnit: quotaPerUnit > 0 ? quotaPerUnit : 500000,
       })
       toast.success('下游 NewAPI 配置已成功保存并即时生效')
+      onSaved?.()
     } catch (e: any) {
       toast.error(`保存失败: ${e.message || '未知错误'}`)
     }
@@ -374,5 +380,28 @@ export function DownstreamNewApiConfigCard() {
         </Button>
       </div>
     </div>
+  )
+}
+
+export function DownstreamNewApiConfigDialog({
+  open,
+  onOpenChange,
+  onSaved,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  onSaved?: () => void
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto p-4 sm:p-6">
+        <DownstreamNewApiConfigCard
+          onSaved={() => {
+            onSaved?.()
+            onOpenChange(false)
+          }}
+        />
+      </DialogContent>
+    </Dialog>
   )
 }

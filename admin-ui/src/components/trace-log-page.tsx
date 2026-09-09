@@ -14,6 +14,7 @@ import {
   PenTool,
   Info,
   ArrowLeftRight,
+  Globe,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -41,6 +42,7 @@ import {
 import { BulkBar } from '@/components/console/bulk-bar'
 import { PageHeader } from '@/components/console/page-header'
 import { FloatingSectionNav, type NavSectionItem } from '@/components/console/floating-section-nav'
+import { DownstreamNewApiConfigDialog } from '@/components/settings/downstream-newapi-config'
 import {
   TimeRangePicker,
   rangeToTimeBounds,
@@ -773,6 +775,7 @@ export function TraceLogPage() {
   const debouncedSearch = useDebounced(searchDraft)
   const searchRef = useRef<HTMLInputElement>(null)
   const [selectedTraceIds, setSelectedTraceIds] = useState<Set<number | string>>(new Set())
+  const [configDialogOpen, setConfigDialogOpen] = useState(false)
   const [now, setNow] = useState(() => Date.now())
   useSlashFocus(searchRef)
 
@@ -892,6 +895,16 @@ const TRACE_NAV_ITEMS: NavSectionItem[] = [
         }
         actions={
           <>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setConfigDialogOpen(true)}
+              className="gap-1.5"
+              title="配置下游 NewAPI 地址与采购成本，开启链路盈亏自动核算与本地缓存"
+            >
+              <Globe className="h-3.5 w-3.5 text-blue-500" />
+              <span>下游 NewAPI 盈亏配置</span>
+            </Button>
             {filterCount > 0 && (
               <Button
                 size="sm"
@@ -1137,6 +1150,14 @@ const TRACE_NAV_ITEMS: NavSectionItem[] = [
           </div>
         </div>
       )}
+
+      <DownstreamNewApiConfigDialog
+        open={configDialogOpen}
+        onOpenChange={setConfigDialogOpen}
+        onSaved={() => {
+          refetch()
+        }}
+      />
     </div>
   )
 }

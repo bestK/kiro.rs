@@ -20,19 +20,9 @@ import { SystemSection } from '@/components/settings/system-section'
 import { SecuritySection } from '@/components/settings/security-section'
 import { MetadataSection } from '@/components/settings/metadata-section'
 import { ModelsSection } from '@/components/settings/models-section'
+import { DownstreamNewApiConfigCard } from '@/components/settings/downstream-newapi-config'
 
-/**
- * 设置页 —— 把此前散在三处的 7 个配置端点收拢到一处。
- *
- * 改造前它们分别住在：顶栏按钮（负载均衡）、顶栏两个下拉（风控故障转移、自愈）、
- * 顶栏设置菜单（登录密钥）、日志页下拉（日志治理）、代理池弹窗内（全局代理）、
- * 镜像更新弹窗内（更新配置）。同一类东西分在六个地方，找一个配置得先记住它藏在哪。
- *
- * 顶栏**保留**三个快捷开关（负载均衡 / 故障转移 / 自愈），因为它们是运维高频动作，
- * 一次点击就该切换完；但参数（冷却时长、连续上限、保留天数这些）全部移到这里 ——
- * 下拉菜单里塞数字输入框本来就不是它该干的事。
- */
-type SectionKey = 'dispatch' | 'billing' | 'models' | 'metadata' | 'network' | 'log' | 'system' | 'security'
+type SectionKey = 'dispatch' | 'billing' | 'downstream' | 'models' | 'metadata' | 'network' | 'log' | 'system' | 'security'
 
 const SECTIONS: {
   key: SectionKey
@@ -48,6 +38,11 @@ const SECTIONS: {
     key: 'billing',
     label: '计费折算',
     icon: <Coins className="h-4 w-4" />,
+  },
+  {
+    key: 'downstream',
+    label: '下游 NewAPI',
+    icon: <Globe className="h-4 w-4" />,
   },
   {
     key: 'models',
@@ -152,6 +147,11 @@ export function SettingsPage() {
       <div className="min-w-0 flex-1">
         {active === 'dispatch' && <DispatchSection />}
         {active === 'billing' && <BillingSection />}
+        {active === 'downstream' && (
+          <div className="rounded-lg border bg-card text-card-foreground shadow-sm">
+            <DownstreamNewApiConfigCard />
+          </div>
+        )}
         {active === 'models' && <ModelsSection />}
         {active === 'metadata' && <MetadataSection />}
         {active === 'network' && <NetworkSection />}

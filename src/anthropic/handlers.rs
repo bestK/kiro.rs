@@ -221,6 +221,26 @@ impl RequestTracer {
         }
     }
 
+    #[allow(dead_code)]
+    pub(crate) fn trace_id(&self) -> &str {
+        &self.trace_id
+    }
+
+    pub fn header_context<'a>(
+        &'a self,
+        credential_id: Option<u64>,
+        group: Option<&'a str>,
+    ) -> crate::model::custom_headers::HeaderInterpolationContext<'a> {
+        crate::model::custom_headers::HeaderInterpolationContext {
+            trace_id: &self.trace_id,
+            model: &self.model,
+            key_id: Some(self.key_id),
+            group,
+            credential_id,
+            client_ip: self.client_ip.as_deref(),
+        }
+    }
+
     /// 标记首个上游 chunk 到达（幂等，仅记录第一次）
     pub fn mark_first_token(&self) {
         if !self.is_stream {
@@ -316,6 +336,27 @@ fn canonical_attempt_outcome(value: &str) -> &'static str {
         outcome::NETWORK_ERROR => outcome::NETWORK_ERROR,
         outcome::BAD_REQUEST => outcome::BAD_REQUEST,
         _ => outcome::UNKNOWN,
+    }
+}
+
+/// 向响应头追加自定义响应头（供下游 NewAPI / OneAPI 提取 upstream_request_id，及用户自定义头部）
+pub(crate) fn attach_custom_headers(
+    resp: &mut Response,
+    custom_headers: Option<&crate::model::custom_headers::CustomHeadersManager>,
+    ctx: &crate::model::custom_headers::HeaderInterpolationContext,
+) {
+    if let Some(mgr) = custom_headers {
+        mgr.attach_to_response(resp, ctx);
+    } else {
+        attach_trace_headers(resp, ctx.trace_id);
+    }
+}
+
+/// 向响应头追加 Trace ID 追踪头（供下游 NewAPI / OneAPI 提取 upstream_request_id）
+pub(crate) fn attach_trace_headers(resp: &mut Response, trace_id: &str) {
+    if let Ok(val) = header::HeaderValue::from_str(trace_id) {
+        resp.headers_mut().insert(header::HeaderName::from_static("x-oneapi-request-id"), val.clone());
+        resp.headers_mut().insert(header::HeaderName::from_static("x-request-id"), val);
     }
 }
 
@@ -710,6 +751,16 @@ pub async fn post_messages(
     // 检测模型名是否包含 "thinking" 后缀，若包含则覆写 thinking 配置
     override_thinking_from_model_name(&mut payload);
 
+    let payload_stream = payload.stream;
+    let tracer = std::sync::Arc::new(RequestTracer::new(
+        &state,
+        RequestTraceOptions {
+            key_ctx: key_ctx.clone(),
+            model: payload.model.clone(),
+            is_stream: payload_stream,
+        },
+    ));
+
     // 检查是否为 WebSearch 请求
     if websearch::has_web_search_tool(&payload) {
         tracing::info!("检测到 WebSearch 工具，路由到 WebSearch 处理");
@@ -722,7 +773,7 @@ pub async fn post_messages(
             payload.tools.clone(),
         ) as i32;
 
-        let resp = websearch::handle_websearch_request(
+        let mut resp = websearch::handle_websearch_request(
             provider,
             &payload,
             input_tokens,
@@ -736,24 +787,20 @@ pub async fn post_messages(
             "error"
         };
         hook.record(0, input_tokens, 0, 0, 0, 0.0, status);
+        attach_custom_headers(
+            &mut resp,
+            state.custom_headers.as_ref(),
+            &tracer.header_context(None, key_ctx.group.as_deref()),
+        );
         return resp;
     }
 
-    let payload_stream = payload.stream;
     // Mixed-tools (web_search + exec...) case: web_search coexists with other tools and falls onto the normal chat path,
     // where the upstream may return a tool_use with name=web_search. Take the internal agentic loop: search internally and feed the results back.
     if websearch::has_web_search_among_tools(&payload) {
         tracing::info!(
             "detected mixed tools containing web_search, entering the web_search agentic loop"
         );
-        let tracer = std::sync::Arc::new(RequestTracer::new(
-            &state,
-            RequestTraceOptions {
-                key_ctx: key_ctx.clone(),
-                model: payload.model.clone(),
-                is_stream: payload_stream,
-            },
-        ));
         return super::websearch_loop::run_web_search_loop(
             provider,
             payload,
@@ -762,6 +809,7 @@ pub async fn post_messages(
             payload_stream,
             key_ctx.group.clone(),
             state.tool_compatibility_mode,
+            state.custom_headers.clone(),
         )
         .await;
     }
@@ -785,11 +833,17 @@ pub async fn post_messages(
             };
             tracing::warn!("请求转换失败: {}", e);
             hook.record(0, 0, 0, 0, 0, 0.0, "error");
-            return (
+            let mut resp = (
                 StatusCode::BAD_REQUEST,
                 Json(ErrorResponse::new(error_type, message)),
             )
                 .into_response();
+            attach_custom_headers(
+                &mut resp,
+                state.custom_headers.as_ref(),
+                &tracer.header_context(None, key_ctx.group.as_deref()),
+            );
+            return resp;
         }
     };
 
@@ -806,7 +860,7 @@ pub async fn post_messages(
         Err(e) => {
             tracing::error!("序列化请求失败: {}", e);
             hook.record(0, 0, 0, 0, 0, 0.0, "error");
-            return (
+            let mut resp = (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse::new(
                     "internal_error",
@@ -814,6 +868,12 @@ pub async fn post_messages(
                 )),
             )
                 .into_response();
+            attach_custom_headers(
+                &mut resp,
+                state.custom_headers.as_ref(),
+                &tracer.header_context(None, key_ctx.group.as_deref()),
+            );
+            return resp;
         }
     };
 
@@ -848,14 +908,6 @@ pub async fn post_messages(
 
     if payload.stream {
         // 流式响应
-        let tracer = std::sync::Arc::new(RequestTracer::new(
-            &state,
-            RequestTraceOptions {
-                key_ctx: key_ctx.clone(),
-                model: payload.model.clone(),
-                is_stream: true,
-            },
-        ));
         handle_stream_request(
             provider,
             &request_body,
@@ -870,6 +922,7 @@ pub async fn post_messages(
             key_ctx.group.clone(),
             key_ctx.token_by_credit,
             state.pricing_manager.clone(),
+            state.custom_headers.clone(),
         )
         .await
     } else {
@@ -878,14 +931,6 @@ pub async fn post_messages(
         // explicitly opted into it via `thinking`/`output_config`.
         let extract_thinking =
             (state.extract_thinking || payload.output_config.is_some()) && thinking_enabled;
-        let tracer = std::sync::Arc::new(RequestTracer::new(
-            &state,
-            RequestTraceOptions {
-                key_ctx: key_ctx.clone(),
-                model: payload.model.clone(),
-                is_stream: false,
-            },
-        ));
         handle_non_stream_request(
             provider,
             &request_body,
@@ -900,6 +945,7 @@ pub async fn post_messages(
             key_ctx.group.clone(),
             key_ctx.token_by_credit,
             state.pricing_manager.clone(),
+            state.custom_headers.clone(),
         )
         .await
     }
@@ -920,6 +966,7 @@ async fn handle_stream_request(
     group: Option<String>,
     token_by_credit: super::middleware::TokenByCreditConfig,
     pricing_manager: Option<crate::model::pricing::SharedPricingManager>,
+    custom_headers: Option<crate::model::custom_headers::CustomHeadersManager>,
 ) -> Response {
     // 调用 Kiro API（支持多凭据故障转移）
     let call_result = match provider
@@ -937,7 +984,13 @@ async fn handle_stream_request(
                 None,
                 TraceUsage::zero(),
             );
-            return map_provider_error(e);
+            let mut resp = map_provider_error(e);
+            attach_custom_headers(
+                &mut resp,
+                custom_headers.as_ref(),
+                &tracer.header_context(None, group.as_deref()),
+            );
+            return resp;
         }
     };
     let response = call_result.response;
@@ -959,16 +1012,22 @@ async fn handle_stream_request(
     let initial_events = ctx.generate_initial_events();
 
     // 创建 SSE 流
-    let stream = create_sse_stream(response, ctx, initial_events, hook, credential_id, tracer, in_flight);
+    let stream = create_sse_stream(response, ctx, initial_events, hook, credential_id, tracer.clone(), in_flight);
 
     // 返回 SSE 响应
-    Response::builder()
+    let mut resp = Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "text/event-stream")
         .header(header::CACHE_CONTROL, "no-cache")
         .header(header::CONNECTION, "keep-alive")
         .body(Body::from_stream(stream))
-        .unwrap()
+        .unwrap();
+    attach_custom_headers(
+        &mut resp,
+        custom_headers.as_ref(),
+        &tracer.header_context(Some(credential_id), group.as_deref()),
+    );
+    resp
 }
 
 /// Ping 事件间隔（25秒）
@@ -1235,6 +1294,7 @@ async fn handle_non_stream_request(
     group: Option<String>,
     token_by_credit: super::middleware::TokenByCreditConfig,
     pricing_manager: Option<crate::model::pricing::SharedPricingManager>,
+    custom_headers: Option<crate::model::custom_headers::CustomHeadersManager>,
 ) -> Response {
     // 调用 Kiro API（支持多凭据故障转移）
     let call_result = match provider
@@ -1251,7 +1311,13 @@ async fn handle_non_stream_request(
                 None,
                 TraceUsage::zero(),
             );
-            return map_provider_error(e);
+            let mut resp = map_provider_error(e);
+            attach_custom_headers(
+                &mut resp,
+                custom_headers.as_ref(),
+                &tracer.header_context(None, group.as_deref()),
+            );
+            return resp;
         }
     };
     let response = call_result.response;
@@ -1270,7 +1336,7 @@ async fn handle_non_stream_request(
                 None,
                 TraceUsage::zero(),
             );
-            return (
+            let mut resp = (
                 StatusCode::BAD_GATEWAY,
                 Json(ErrorResponse::new(
                     "api_error",
@@ -1278,6 +1344,12 @@ async fn handle_non_stream_request(
                 )),
             )
                 .into_response();
+            attach_custom_headers(
+                &mut resp,
+                custom_headers.as_ref(),
+                &tracer.header_context(Some(credential_id), group.as_deref()),
+            );
+            return resp;
         }
     };
 
@@ -1460,11 +1532,17 @@ async fn handle_non_stream_request(
                 TraceUsage::zero(),
             );
         }
-        return (
+        let mut resp = (
             StatusCode::BAD_GATEWAY,
             Json(ErrorResponse::new("upstream_tool_json_error", message)),
         )
             .into_response();
+        attach_custom_headers(
+            &mut resp,
+            custom_headers.as_ref(),
+            &tracer.header_context(Some(credential_id), group.as_deref()),
+        );
+        return resp;
     }
 
     // 确定 stop_reason
@@ -1569,7 +1647,13 @@ async fn handle_non_stream_request(
             source: UsageSource::resolve(provider_token_usage.is_some(), &cache_usage),
         },
     );
-    (StatusCode::OK, Json(response_body)).into_response()
+    let mut resp = (StatusCode::OK, Json(response_body)).into_response();
+    attach_custom_headers(
+        &mut resp,
+        custom_headers.as_ref(),
+        &tracer.header_context(Some(credential_id), group.as_deref()),
+    );
+    resp
 }
 
 fn build_non_stream_content(
@@ -1739,6 +1823,16 @@ pub async fn post_messages_cc(
     // 检测模型名是否包含 "thinking" 后缀，若包含则覆写 thinking 配置
     override_thinking_from_model_name(&mut payload);
 
+    let payload_stream = payload.stream;
+    let tracer = std::sync::Arc::new(RequestTracer::new(
+        &state,
+        RequestTraceOptions {
+            key_ctx: key_ctx.clone(),
+            model: payload.model.clone(),
+            is_stream: payload_stream,
+        },
+    ));
+
     // 检查是否为 WebSearch 请求
     if websearch::has_web_search_tool(&payload) {
         tracing::info!("检测到 WebSearch 工具，路由到 WebSearch 处理");
@@ -1751,7 +1845,7 @@ pub async fn post_messages_cc(
             payload.tools.clone(),
         ) as i32;
 
-        let resp = websearch::handle_websearch_request(
+        let mut resp = websearch::handle_websearch_request(
             provider,
             &payload,
             input_tokens,
@@ -1764,24 +1858,20 @@ pub async fn post_messages_cc(
             "error"
         };
         hook.record(0, input_tokens, 0, 0, 0, 0.0, status);
+        attach_custom_headers(
+            &mut resp,
+            state.custom_headers.as_ref(),
+            &tracer.header_context(None, key_ctx.group.as_deref()),
+        );
         return resp;
     }
 
-    let payload_stream = payload.stream;
     // Mixed-tools (web_search + exec...) case: web_search coexists with other tools and falls onto the normal chat path,
     // where the upstream may return a tool_use with name=web_search. Take the internal agentic loop: search internally and feed the results back.
     if websearch::has_web_search_among_tools(&payload) {
         tracing::info!(
             "detected mixed tools containing web_search, entering the web_search agentic loop"
         );
-        let tracer = std::sync::Arc::new(RequestTracer::new(
-            &state,
-            RequestTraceOptions {
-                key_ctx: key_ctx.clone(),
-                model: payload.model.clone(),
-                is_stream: payload_stream,
-            },
-        ));
         return super::websearch_loop::run_web_search_loop(
             provider,
             payload,
@@ -1790,6 +1880,7 @@ pub async fn post_messages_cc(
             payload_stream,
             key_ctx.group.clone(),
             state.tool_compatibility_mode,
+            state.custom_headers.clone(),
         )
         .await;
     }
@@ -1813,11 +1904,17 @@ pub async fn post_messages_cc(
             };
             tracing::warn!("请求转换失败: {}", e);
             hook.record(0, 0, 0, 0, 0, 0.0, "error");
-            return (
+            let mut resp = (
                 StatusCode::BAD_REQUEST,
                 Json(ErrorResponse::new(error_type, message)),
             )
                 .into_response();
+            attach_custom_headers(
+                &mut resp,
+                state.custom_headers.as_ref(),
+                &tracer.header_context(None, key_ctx.group.as_deref()),
+            );
+            return resp;
         }
     };
 
@@ -1834,7 +1931,7 @@ pub async fn post_messages_cc(
         Err(e) => {
             tracing::error!("序列化请求失败: {}", e);
             hook.record(0, 0, 0, 0, 0, 0.0, "error");
-            return (
+            let mut resp = (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse::new(
                     "internal_error",
@@ -1842,6 +1939,12 @@ pub async fn post_messages_cc(
                 )),
             )
                 .into_response();
+            attach_custom_headers(
+                &mut resp,
+                state.custom_headers.as_ref(),
+                &tracer.header_context(None, key_ctx.group.as_deref()),
+            );
+            return resp;
         }
     };
 
@@ -1875,14 +1978,6 @@ pub async fn post_messages_cc(
 
     if payload.stream {
         // 流式响应（缓冲模式）
-        let tracer = std::sync::Arc::new(RequestTracer::new(
-            &state,
-            RequestTraceOptions {
-                key_ctx: key_ctx.clone(),
-                model: payload.model.clone(),
-                is_stream: true,
-            },
-        ));
         handle_stream_request_buffered(
             provider,
             &request_body,
@@ -1897,19 +1992,12 @@ pub async fn post_messages_cc(
             key_ctx.group.clone(),
             key_ctx.token_by_credit,
             state.pricing_manager.clone(),
+            state.custom_headers.clone(),
         )
         .await
     } else {
         // 非流式响应：仅在配置开启时提取 thinking 块
         let extract_thinking = state.extract_thinking && thinking_enabled;
-        let tracer = std::sync::Arc::new(RequestTracer::new(
-            &state,
-            RequestTraceOptions {
-                key_ctx: key_ctx.clone(),
-                model: payload.model.clone(),
-                is_stream: false,
-            },
-        ));
         handle_non_stream_request(
             provider,
             &request_body,
@@ -1924,6 +2012,7 @@ pub async fn post_messages_cc(
             key_ctx.group.clone(),
             key_ctx.token_by_credit,
             state.pricing_manager.clone(),
+            state.custom_headers.clone(),
         )
         .await
     }
@@ -1947,6 +2036,7 @@ async fn handle_stream_request_buffered(
     group: Option<String>,
     token_by_credit: super::middleware::TokenByCreditConfig,
     pricing_manager: Option<crate::model::pricing::SharedPricingManager>,
+    custom_headers: Option<crate::model::custom_headers::CustomHeadersManager>,
 ) -> Response {
     // 调用 Kiro API（支持多凭据故障转移）
     let call_result = match provider
@@ -1963,7 +2053,13 @@ async fn handle_stream_request_buffered(
                 None,
                 TraceUsage::zero(),
             );
-            return map_provider_error(e);
+            let mut resp = map_provider_error(e);
+            attach_custom_headers(
+                &mut resp,
+                custom_headers.as_ref(),
+                &tracer.header_context(None, group.as_deref()),
+            );
+            return resp;
         }
     };
     let response = call_result.response;
@@ -1982,16 +2078,22 @@ async fn handle_stream_request_buffered(
     ctx.set_cache_usage(cache_usage);
 
     // 创建缓冲 SSE 流
-    let stream = create_buffered_sse_stream(response, ctx, hook, credential_id, tracer, in_flight);
+    let stream = create_buffered_sse_stream(response, ctx, hook, credential_id, tracer.clone(), in_flight);
 
     // 返回 SSE 响应
-    Response::builder()
+    let mut resp = Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "text/event-stream")
         .header(header::CACHE_CONTROL, "no-cache")
         .header(header::CONNECTION, "keep-alive")
         .body(Body::from_stream(stream))
-        .unwrap()
+        .unwrap();
+    attach_custom_headers(
+        &mut resp,
+        custom_headers.as_ref(),
+        &tracer.header_context(Some(credential_id), group.as_deref()),
+    );
+    resp
 }
 
 /// 创建缓冲 SSE 事件流
@@ -2643,5 +2745,24 @@ mod tests {
         assert!(validate_max_tokens(1).is_ok());
         assert!(validate_max_tokens(0).is_err());
         assert!(validate_max_tokens(-1).is_err());
+    }
+
+    #[test]
+    fn attach_trace_headers_sets_expected_headers() {
+        let mut resp = Response::builder()
+            .status(StatusCode::OK)
+            .body(Body::empty())
+            .unwrap();
+        let trace_id = "0fc99995-b8cc-46b9-bf25-c44d0e3b1447";
+        attach_trace_headers(&mut resp, trace_id);
+
+        assert_eq!(
+            resp.headers().get("x-oneapi-request-id").unwrap(),
+            trace_id
+        );
+        assert_eq!(
+            resp.headers().get("x-request-id").unwrap(),
+            trace_id
+        );
     }
 }

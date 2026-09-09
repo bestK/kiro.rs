@@ -214,50 +214,81 @@ pub async fn post_responses(
     };
 
     // 2. 复用 Anthropic 全链路。流式请求会得到标准 Anthropic SSE。
-    let inner = post_messages(State(state), Extension(key_ctx), Json(anthropic_req)).await;
+    let inner = post_messages(State(state.clone()), Extension(key_ctx), Json(anthropic_req)).await;
+
+    let mut configured_names = state
+        .custom_headers
+        .as_ref()
+        .map(|mgr| mgr.get_active_header_names())
+        .unwrap_or_default();
+    configured_names.push(header::HeaderName::from_static("x-oneapi-request-id"));
+    configured_names.push(header::HeaderName::from_static("x-request-id"));
+
+    let trace_headers: Vec<(header::HeaderName, header::HeaderValue)> = inner
+        .headers()
+        .iter()
+        .filter(|(name, _)| configured_names.iter().any(|cfg| cfg == *name))
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+
+    let attach_trace = |resp: &mut Response| {
+        for (name, val) in &trace_headers {
+            resp.headers_mut().insert(name.clone(), val.clone());
+        }
+    };
 
     let status = inner.status();
     if !status.is_success() {
         let body_bytes = match to_bytes(inner.into_body(), MAX_INNER_BODY).await {
             Ok(b) => b,
             Err(e) => {
-                return responses_error(
+                let mut resp = responses_error(
                     StatusCode::BAD_GATEWAY,
                     "api_error",
                     &format!("failed to read upstream response: {e}"),
                 );
+                attach_trace(&mut resp);
+                return resp;
             }
         };
-        return Response::builder()
+        let mut resp = Response::builder()
             .status(status)
             .header(header::CONTENT_TYPE, "application/json")
             .body(Body::from(body_bytes))
             .unwrap();
+        attach_trace(&mut resp);
+        return resp;
     }
 
     if want_stream {
-        return responses_streaming_response(inner.into_body(), model, tool_kinds, response_config);
+        let mut resp = responses_streaming_response(inner.into_body(), model, tool_kinds, response_config);
+        attach_trace(&mut resp);
+        return resp;
     }
 
     let body_bytes = match to_bytes(inner.into_body(), MAX_INNER_BODY).await {
         Ok(b) => b,
         Err(e) => {
-            return responses_error(
+            let mut resp = responses_error(
                 StatusCode::BAD_GATEWAY,
                 "api_error",
                 &format!("failed to read upstream response: {e}"),
             );
+            attach_trace(&mut resp);
+            return resp;
         }
     };
 
     let anthropic: Value = match serde_json::from_slice(&body_bytes) {
         Ok(v) => v,
         Err(e) => {
-            return responses_error(
+            let mut resp = responses_error(
                 StatusCode::BAD_GATEWAY,
                 "api_error",
                 &format!("failed to parse upstream response: {e}"),
             );
+            attach_trace(&mut resp);
+            return resp;
         }
     };
 
@@ -265,7 +296,9 @@ pub async fn post_responses(
     let parsed = parse_anthropic_message(&anthropic, &model);
 
     let body = build_responses_object_with_config(&parsed, &tool_kinds, &response_config);
-    (StatusCode::OK, Json(body)).into_response()
+    let mut resp = (StatusCode::OK, Json(body)).into_response();
+    attach_trace(&mut resp);
+    resp
 }
 
 // ============================ 请求翻译 ============================

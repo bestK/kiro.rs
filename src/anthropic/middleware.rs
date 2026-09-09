@@ -80,6 +80,8 @@ pub struct AppState {
     pub group_manager: Option<crate::admin::groups::SharedGroupManager>,
     /// 全局按积分返回 Token 共享状态
     pub token_by_credit: Option<crate::model::pricing::SharedTokenByCredit>,
+    /// 自定义响应头管理器（热重载）
+    pub custom_headers: Option<crate::model::custom_headers::CustomHeadersManager>,
 }
 
 impl AppState {
@@ -101,6 +103,7 @@ impl AppState {
             pricing_manager: None,
             group_manager: None,
             token_by_credit: None,
+            custom_headers: None,
         }
     }
 
@@ -145,6 +148,15 @@ impl AppState {
         self.pricing_manager = pricing;
         self.token_by_credit = token_by_credit;
         self.group_manager = group_manager;
+        self
+    }
+
+    /// 注入自定义响应头管理器
+    pub fn with_custom_headers(
+        mut self,
+        custom_headers: Option<crate::model::custom_headers::CustomHeadersManager>,
+    ) -> Self {
+        self.custom_headers = custom_headers;
         self
     }
 }

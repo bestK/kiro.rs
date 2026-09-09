@@ -71,6 +71,7 @@ pub fn create_router(
         None,
         None,
         None,
+        None,
     )
 }
 
@@ -88,6 +89,7 @@ pub fn create_router_with_shared_provider(
     pricing_manager: Option<crate::model::pricing::SharedPricingManager>,
     group_manager: Option<crate::admin::groups::SharedGroupManager>,
     token_by_credit: Option<crate::model::pricing::SharedTokenByCredit>,
+    custom_headers: Option<crate::model::custom_headers::CustomHeadersManager>,
 ) -> Router {
     let mut state = AppState::new(extract_thinking, tool_compatibility_mode);
     if let Some(provider) = kiro_provider {
@@ -101,6 +103,7 @@ pub fn create_router_with_shared_provider(
         token_by_credit,
         group_manager,
     );
+    state = state.with_custom_headers(custom_headers);
 
     // 需要认证的 /v1 路由
     let v1_routes = Router::new()

@@ -17,7 +17,7 @@ use super::{
         export_credentials, force_refresh_token, get_account_rpm_limit_config,
         get_account_throttle_config, get_all_credentials,
         get_credential_balance, get_credential_metadata_schema, get_credential_models,
-        get_current_models, get_global_proxy, get_custom_models,
+        get_current_models, get_global_proxy, get_custom_models, get_custom_headers,
         get_cache_metering_config, get_session_affinity_config,
         get_token_by_credit_config, set_token_by_credit_config,
         verify_downstream_billing, get_billing_verifications, clear_billing_verifications,
@@ -29,7 +29,7 @@ use super::{
         rollback_image_update, rotate_client_key, set_account_rpm_limit_config,
         set_account_throttle_config, set_client_key_disabled, set_client_key_max_credits,
         set_credential_disabled, set_credential_metadata_schema, set_credential_overage,
-        set_credential_priority, set_custom_models, set_global_proxy, set_load_balancing_mode,
+        set_credential_priority, set_custom_models, set_custom_headers, set_global_proxy, set_load_balancing_mode,
         set_cache_metering_config, set_session_affinity_config,
         set_log_governance_config, set_proxy_enabled, set_self_heal_config, set_update_config,
         start_idc_login, start_idc_relogin, start_social_login, start_social_relogin,
@@ -172,6 +172,10 @@ pub fn create_admin_router(state: AdminState) -> Router {
         .route(
             "/config/custom-models",
             get(get_custom_models).put(set_custom_models),
+        )
+        .route(
+            "/config/custom-headers",
+            get(get_custom_headers).put(set_custom_headers),
         )
         .route(
             "/config/update",

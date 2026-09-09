@@ -22,7 +22,7 @@ export interface DownstreamRatioBalancerProps {
 export function DownstreamRatioBalancer({
   onApply,
   currentUnit = 'k',
-  initialTargetKPrice = 2.0,
+  initialTargetKPrice = 80,
   initialDownstreamRatio = 0.3,
   compact = false,
   className,
@@ -50,7 +50,7 @@ export function DownstreamRatioBalancer({
     return +(targetKVal / (ratioVal * 1000)).toFixed(6)
   }, [targetKVal, ratioVal, isValid])
 
-  const targetPresets = [1.0, 1.5, 2.0, 2.5, 3.0, 4.0]
+  const targetPresets = [70, 75, 80, 90, 100, 120, 150]
   const ratioPresets = [0.1, 0.2, 0.25, 0.3, 0.5, 0.8, 1.0]
 
   const discountText = useMemo(() => {
@@ -119,7 +119,7 @@ export function DownstreamRatioBalancer({
               min="0.01"
               value={targetKPriceStr}
               onChange={(e) => setTargetKPriceStr(e.target.value)}
-              placeholder="2.0"
+              placeholder="80"
               className="h-7 pl-5 pr-14 text-xs font-mono"
             />
             <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground">

@@ -92,7 +92,7 @@ export function BillingRatioSimulator({
   // 当前模拟的倍率（例如 0.13 代表 0.13x / 1.3折）
   const [ratio, setRatio] = useState<number>(0.13)
   const [ratioInputStr, setRatioInputStr] = useState<string>('0.13')
-  const [targetRevenueStr, setTargetRevenueStr] = useState<string>('2.0')
+  const [targetRevenueStr, setTargetRevenueStr] = useState<string>('80')
   const [hasCopied, setHasCopied] = useState(false)
   const [showCopySection, setShowCopySection] = useState(false)
 
@@ -394,7 +394,7 @@ ${POPULAR_MODELS.map((m) => {
                       min="0.01"
                       value={targetRevenueStr}
                       onChange={(e) => setTargetRevenueStr(e.target.value)}
-                      placeholder="2.0"
+                      placeholder="80"
                       className="h-7 pl-5 pr-14 text-xs font-mono"
                     />
                     <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground">
@@ -403,7 +403,7 @@ ${POPULAR_MODELS.map((m) => {
                   </div>
                   <div className="flex flex-wrap items-center gap-1 pt-0.5">
                     <span className="text-[10px] text-muted-foreground mr-0.5">预设:</span>
-                    {[1.0, 1.5, 2.0, 2.5, 3.0].map((t) => (
+                    {[70, 75, 80, 90, 100, 120, 150].map((t) => (
                       <button
                         key={t}
                         type="button"

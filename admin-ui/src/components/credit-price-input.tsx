@@ -92,8 +92,8 @@ export function CreditPriceInput({
     conversionPreview = '留空则继承上一级（分组或全局）单价'
   }
 
-  const kPresets = [1, 1.5, 2, 2.5, 3]
-  const singlePresets = [0.001, 0.0015, 0.002, 0.0025, 0.003]
+  const kPresets = [70, 75, 80, 90, 100, 120, 150]
+  const singlePresets = [0.07, 0.075, 0.08, 0.09, 0.1, 0.12, 0.15]
   const presets = unit === 'k' ? kPresets : singlePresets
   const currentNum = Number(draft)
 
@@ -159,7 +159,7 @@ export function CreditPriceInput({
           onChange={(e) => handleInputChange(e.target.value)}
           placeholder={
             placeholder ??
-            (unit === 'k' ? '例如 2.0 (留空继承全局)' : '例如 0.002 (留空继承全局)')
+            (unit === 'k' ? '例如 80 (留空继承全局)' : '例如 0.08 (留空继承全局)')
           }
           disabled={disabled}
           className="pr-20 font-mono text-xs"

@@ -118,8 +118,8 @@ function BillingCreditPriceRow({
     }
   }
 
-  const kPresets = [1, 1.5, 2, 2.5, 3, 5]
-  const singlePresets = [0.001, 0.0015, 0.002, 0.003, 0.005]
+  const kPresets = [70, 75, 80, 90, 100, 120, 150]
+  const singlePresets = [0.07, 0.075, 0.08, 0.09, 0.1, 0.12, 0.15]
   const presets = unit === 'k' ? kPresets : singlePresets
   const currentDisplayNum = toDisplay(creditPrice, unit)
 
@@ -135,7 +135,7 @@ function BillingCreditPriceRow({
                 <strong className="text-foreground font-mono">
                   ${creditPrice} / 积分
                 </strong>
-                。例如 New API 默认 $2.00 / 千分（即 1 积分 = $0.002）。
+                。例如常用单价 $80 / 千分（即 1 积分 = $0.08）。
               </>
             ) : (
               <>
@@ -143,7 +143,7 @@ function BillingCreditPriceRow({
                 <strong className="text-foreground font-mono">
                   ${+(creditPrice * 1000).toFixed(4)} / 千分
                 </strong>
-                。例如 New API 默认 $0.002 / 积分。
+                。例如常用单价 $0.08 / 积分。
               </>
             )}
           </div>
@@ -1269,14 +1269,14 @@ export function BillingSection() {
                       step="any"
                       value={hypoPriceInput}
                       onChange={(e) => handleHypoPriceChange(e.target.value)}
-                      placeholder={hypoUnit === 'k' ? '2.00' : '0.002'}
+                      placeholder={hypoUnit === 'k' ? '80.00' : '0.08'}
                       className="h-8 pl-6 text-xs font-mono"
                     />
                   </div>
                   {/* 快捷预设单价按钮 */}
                   <div className="flex items-center gap-1 shrink-0">
                     {hypoUnit === 'k' ? (
-                      [1, 1.5, 2, 3].map((p) => (
+                      [70, 75, 80, 90, 100, 120, 150].map((p) => (
                         <Button
                           key={p}
                           type="button"
@@ -1292,7 +1292,7 @@ export function BillingSection() {
                         </Button>
                       ))
                     ) : (
-                      [0.001, 0.0015, 0.002, 0.003].map((p) => (
+                      [0.07, 0.075, 0.08, 0.09, 0.1, 0.12, 0.15].map((p) => (
                         <Button
                           key={p}
                           type="button"

@@ -1907,7 +1907,7 @@ pub async fn list_traces(
 
         if !missing_ids.is_empty() {
             if let Ok(client) = reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(3))
+                .timeout(std::time::Duration::from_secs(6))
                 .build()
             {
                 let base_url = newapi_cfg.base_url.clone();

@@ -3141,7 +3141,7 @@ impl AdminService {
         }
 
         let client = match reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(8))
+            .timeout(std::time::Duration::from_secs(15))
             .build()
         {
             Ok(c) => c,
@@ -3159,32 +3159,74 @@ impl AdminService {
             format!("Bearer {}", admin_key)
         };
 
-        // 请求 NewAPI /api/log/?p=0&page_size=1
-        let test_url = format!("{}/api/log/?p=0&page_size=1", base_url);
-        match client.get(&test_url).header("Authorization", auth_header).send().await {
+        // 优先使用 /api/user/self 验证管理员身份与连通性（避免 /api/log 无过滤时全表扫描 50 万条日志导致超时）
+        let self_url = format!("{}/api/user/self", base_url);
+        match client.get(&self_url).header("Authorization", &auth_header).send().await {
             Ok(resp) => {
                 let status = resp.status();
                 if status.is_success() {
-                    TestNewApiConnectionResponse {
-                        success: true,
-                        message: "连接成功，管理员日志权限正常！".to_string(),
+                    let body: serde_json::Value = resp.json().await.unwrap_or_default();
+                    let username = body.get("data")
+                        .and_then(|d| d.get("username"))
+                        .and_then(|u| u.as_str())
+                        .unwrap_or("admin");
+                    let role = body.get("data")
+                        .and_then(|d| d.get("role"))
+                        .and_then(|r| r.as_i64())
+                        .unwrap_or(0);
+                    if role >= 10 {
+                        TestNewApiConnectionResponse {
+                            success: true,
+                            message: format!("连接成功！已验证管理员账号: {} (角色级别: {})", username, role),
+                        }
+                    } else {
+                        TestNewApiConnectionResponse {
+                            success: false,
+                            message: format!("已连通但该令牌属于普通用户 (username: {}, role: {})，请更换为管理员令牌", username, role),
+                        }
                     }
                 } else if status.as_u16() == 401 || status.as_u16() == 403 {
                     TestNewApiConnectionResponse {
                         success: false,
-                        message: format!("鉴权失败 (HTTP {}): 请检查管理员密钥是否正确且具备管理员权限", status),
+                        message: format!("鉴权失败 (HTTP {}): 请检查管理员密钥是否正确", status),
                     }
                 } else {
-                    TestNewApiConnectionResponse {
-                        success: false,
-                        message: format!("NewAPI 返回错误状态码 HTTP {}", status),
+                    // 若 /api/user/self 报 404 等，回退请求 /api/log/?p=0&page_size=1
+                    let test_url = format!("{}/api/log/?p=0&page_size=1", base_url);
+                    match client.get(&test_url).header("Authorization", &auth_header).send().await {
+                        Ok(fallback_resp) => {
+                            let fb_status = fallback_resp.status();
+                            if fb_status.is_success() {
+                                TestNewApiConnectionResponse {
+                                    success: true,
+                                    message: "连接成功，管理员日志权限正常！".to_string(),
+                                }
+                            } else {
+                                TestNewApiConnectionResponse {
+                                    success: false,
+                                    message: format!("NewAPI 接口响应异常 (HTTP {})", fb_status),
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            TestNewApiConnectionResponse {
+                                success: false,
+                                message: format!("请求 NewAPI 失败: {}", e),
+                            }
+                        }
                     }
                 }
             }
             Err(e) => {
+                let mut err_msg = e.to_string();
+                let mut source = std::error::Error::source(&e);
+                while let Some(cause) = source {
+                    err_msg.push_str(&format!(" -> {}", cause));
+                    source = cause.source();
+                }
                 TestNewApiConnectionResponse {
                     success: false,
-                    message: format!("请求 NewAPI 失败: {}", e),
+                    message: format!("请求 NewAPI 失败: {}", err_msg),
                 }
             }
         }

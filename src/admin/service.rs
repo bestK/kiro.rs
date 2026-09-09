@@ -28,7 +28,7 @@ use crate::kiro::model::requests::kiro::KiroRequest;
 use crate::kiro::parser::decoder::EventStreamDecoder;
 use crate::kiro::provider::KiroProvider;
 use crate::kiro::token_manager::{
-    IdcReloginCredentials, MultiTokenManager, RefreshTokenInvalidError,
+    priority_key, IdcReloginCredentials, MultiTokenManager, RefreshTokenInvalidError,
 };
 use crate::model::config::Config;
 
@@ -1907,8 +1907,9 @@ impl AdminService {
         let sort_field = query.effective_sort_field().unwrap_or("manual");
 
         if sort_field == "manual" {
-            // 默认服务端调度顺序：优先级越小越靠前，同优先级按 ID 升序
-            filtered.sort_by_key(|c| (c.priority, c.id));
+            // 默认服务端调度顺序：优先级越小越靠前（若 invert_priority 开启则越大越靠前），同优先级按 ID 升序
+            let invert = self.token_manager.get_invert_priority();
+            filtered.sort_by_key(|c| (priority_key(c.priority, invert), c.id));
         } else {
             filtered.sort_by(|a, b| {
                 let cmp = match sort_field {
@@ -2060,7 +2061,8 @@ impl AdminService {
         if let Some(filter) = id_filter {
             credentials.retain(|c| c.id.map(|id| filter.contains(&id)).unwrap_or(false));
         }
-        credentials.sort_by_key(|c| (c.priority, c.id.unwrap_or(u64::MAX)));
+        let invert = self.token_manager.get_invert_priority();
+        credentials.sort_by_key(|c| (priority_key(c.priority, invert), c.id.unwrap_or(u64::MAX)));
 
         let accounts = credentials
             .into_iter()
@@ -3790,30 +3792,38 @@ impl AdminService {
             .map(|s| s.to_string())
     }
 
-    /// 获取负载均衡模式
+    /// 获取负载均衡模式与优先级反转
     pub fn get_load_balancing_mode(&self) -> LoadBalancingModeResponse {
         LoadBalancingModeResponse {
             mode: self.token_manager.get_load_balancing_mode(),
+            invert_priority: self.token_manager.get_invert_priority(),
         }
     }
 
-    /// 设置负载均衡模式
+    /// 设置负载均衡模式与优先级反转
     pub fn set_load_balancing_mode(
         &self,
         req: SetLoadBalancingModeRequest,
     ) -> Result<LoadBalancingModeResponse, AdminServiceError> {
-        // 验证模式值
-        if req.mode != "priority" && req.mode != "balanced" {
+        if req.mode.is_none() && req.invert_priority.is_none() {
             return Err(AdminServiceError::InvalidCredential(
-                "mode 必须是 'priority' 或 'balanced'".to_string(),
+                "至少需要提供 mode 或 invertPriority 之一".to_string(),
             ));
         }
 
+        if let Some(ref mode) = req.mode {
+            if mode != "priority" && mode != "balanced" {
+                return Err(AdminServiceError::InvalidCredential(
+                    "mode 必须是 'priority' 或 'balanced'".to_string(),
+                ));
+            }
+        }
+
         self.token_manager
-            .set_load_balancing_mode(req.mode.clone())
+            .update_load_balancing_settings(req.mode.as_deref(), req.invert_priority)
             .map_err(|e| AdminServiceError::InternalError(e.to_string()))?;
 
-        Ok(LoadBalancingModeResponse { mode: req.mode })
+        Ok(self.get_load_balancing_mode())
     }
 
     /// 获取会话粘性路由配置与运行时统计
@@ -5522,5 +5532,73 @@ mod tests {
         // 验证内存规则也同步热更新
         let active_names = custom_headers.get_active_header_names();
         assert_eq!(active_names.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_admin_service_load_balancing_and_invert_priority() {
+        let first = KiroCredentials {
+            priority: 10,
+            refresh_token: Some("rt1".to_string()),
+            ..KiroCredentials::default()
+        };
+        let second = KiroCredentials {
+            priority: 90,
+            refresh_token: Some("rt2".to_string()),
+            ..KiroCredentials::default()
+        };
+        let manager = Arc::new(
+            MultiTokenManager::new(Config::default(), vec![first, second], None, None, false).unwrap(),
+        );
+        let service = AdminService::new(manager, Vec::new());
+
+        // 默认状态
+        let initial_lb = service.get_load_balancing_mode();
+        assert_eq!(initial_lb.mode, "priority");
+        assert!(!initial_lb.invert_priority);
+
+        // 默认 manual 排序：priority=10 在前，priority=90 在后
+        let list1 = service.get_credentials_paged(&CredentialsQuery::default());
+        assert_eq!(list1.credentials[0].priority, 10);
+        assert_eq!(list1.credentials[1].priority, 90);
+
+        // 切换 invert_priority = true
+        let updated = service
+            .set_load_balancing_mode(SetLoadBalancingModeRequest {
+                mode: None,
+                invert_priority: Some(true),
+            })
+            .unwrap();
+        assert_eq!(updated.mode, "priority");
+        assert!(updated.invert_priority);
+
+        // 验证当前状态
+        let current_lb = service.get_load_balancing_mode();
+        assert!(current_lb.invert_priority);
+
+        // manual 排序现在数值大的排在前面：90 在前，10 在后
+        let list2 = service.get_credentials_paged(&CredentialsQuery::default());
+        assert_eq!(list2.credentials[0].priority, 90);
+        assert_eq!(list2.credentials[1].priority, 10);
+
+        // 导出也是数值大的（凭据 2，rt2）排在前面
+        let exported = service.export_credentials(None);
+        assert_eq!(
+            exported.accounts[0].credentials.refresh_token.as_deref(),
+            Some("rt2")
+        );
+        assert_eq!(
+            exported.accounts[1].credentials.refresh_token.as_deref(),
+            Some("rt1")
+        );
+
+        // 验证只改 mode 不影响 invert_priority
+        let updated_mode = service
+            .set_load_balancing_mode(SetLoadBalancingModeRequest {
+                mode: Some("balanced".to_string()),
+                invert_priority: None,
+            })
+            .unwrap();
+        assert_eq!(updated_mode.mode, "balanced");
+        assert!(updated_mode.invert_priority);
     }
 }

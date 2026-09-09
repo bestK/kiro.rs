@@ -1205,6 +1205,8 @@ pub struct MultiTokenManager {
     is_multiple_format: AtomicBool,
     /// 负载均衡模式（运行时可修改）
     load_balancing_mode: Mutex<String>,
+    /// 优先级反转开关：默认 false（数值小的优先）；true 时数值大的优先
+    invert_priority: AtomicBool,
     /// 会话粘性路由：会话 → 上一轮成功凭据 的绑定表（运行时可开关 / 改 TTL）
     session_affinity: SessionAffinity,
     /// 账号级 429 风控故障转移开关（运行时可修改）
@@ -1315,6 +1317,20 @@ fn credential_tier_rank(
         .iter()
         .filter_map(|g| tiers.get(g).copied())
         .min()
+}
+
+/// 计算用于 min_by_key 的优先级排序键
+///
+/// 当 invert 为 false 时，返回 priority 原值（数值越小越优先）；
+/// 当 invert 为 true 时，返回 u32::MAX - priority（数值越大，计算值越小，因而越优先）。
+/// 保证与 min_by_key 配合时无需改变比较器逻辑，同时次级比较键（如 id）不受影响。
+#[inline]
+pub fn priority_key(priority: u32, invert: bool) -> u32 {
+    if invert {
+        u32::MAX - priority
+    } else {
+        priority
+    }
 }
 
 /// 判断某账号的分组集合是否匹配请求所属分组（严格隔离）
@@ -1488,11 +1504,12 @@ impl MultiTokenManager {
             anyhow::bail!("检测到重复的凭据 ID: {:?}", duplicate_ids);
         }
 
-        // 选择初始凭据：优先级最高（priority 最小）的可用凭据，无可用凭据时为 0
+        let invert_priority = config.invert_priority;
+        // 选择初始凭据：根据 invert_priority 选择优先级最高（priority 最小或最大）的可用凭据，无可用凭据时为 0
         let initial_id = entries
             .iter()
             .filter(|e| !e.disabled)
-            .min_by_key(|e| (e.credentials.priority, e.id))
+            .min_by_key(|e| (priority_key(e.credentials.priority, invert_priority), e.id))
             .map(|e| e.id)
             .unwrap_or(0);
 
@@ -1522,6 +1539,7 @@ impl MultiTokenManager {
             runtime_config_update_lock: Mutex::new(()),
             is_multiple_format: AtomicBool::new(is_multiple_format),
             load_balancing_mode: Mutex::new(load_balancing_mode),
+            invert_priority: AtomicBool::new(invert_priority),
             session_affinity,
             account_throttle_failover: AtomicBool::new(throttle_failover),
             account_throttle_cooldown_secs: AtomicU64::new(throttle_cooldown_secs),
@@ -1918,6 +1936,7 @@ impl MultiTokenManager {
         now: Instant,
     ) -> Option<u64> {
         let group_tiers = self.resolve_group_tiers(group);
+        let invert = self.invert_priority.load(Ordering::Relaxed);
         entries
             .iter()
             .filter(|entry| {
@@ -1925,7 +1944,7 @@ impl MultiTokenManager {
             })
             .min_by_key(|e| (
                 credential_tier_rank(&e.credentials.groups, group_tiers.as_ref()).unwrap_or(0),
-                e.credentials.priority,
+                priority_key(e.credentials.priority, invert),
                 e.id,
             ))
             .map(|e| e.id)
@@ -2102,6 +2121,7 @@ impl MultiTokenManager {
         let mode = self.load_balancing_mode.lock().clone();
         let mode = mode.as_str();
 
+        let invert = self.invert_priority.load(Ordering::Relaxed);
         match mode {
             "balanced" => {
                 // Tiered Least-Used 策略：
@@ -2116,7 +2136,7 @@ impl MultiTokenManager {
                         in_flight,
                         e.success_count,
                         discovery_rank,
-                        e.credentials.priority,
+                        priority_key(e.credentials.priority, invert),
                         e.id,
                     )
                 })?;
@@ -2128,10 +2148,10 @@ impl MultiTokenManager {
                 Some((entry.id, entry.credentials.clone()))
             }
             _ => {
-                // priority 模式（默认）：严格按 (tier, priority, id) 升序固定顺序选择。
+                // priority 模式（默认）：严格按 (tier, priority_key, id) 升序固定顺序选择。
                 let (entry, _, _) = available
                     .iter()
-                    .min_by_key(|(e, tier, _)| (*tier, e.credentials.priority, e.id))?;
+                    .min_by_key(|(e, tier, _)| (*tier, priority_key(e.credentials.priority, invert), e.id))?;
                 Some((entry.id, entry.credentials.clone()))
             }
         }
@@ -2360,12 +2380,13 @@ impl MultiTokenManager {
     fn select_highest_priority(&self) {
         let entries = self.entries.lock();
         let mut current_id = self.current_id.lock();
+        let invert = self.invert_priority.load(Ordering::Relaxed);
 
         // 选择优先级最高的未禁用凭据（不排除当前凭据）
         if let Some(best) = entries
             .iter()
             .filter(|e| !e.disabled)
-            .min_by_key(|e| (e.credentials.priority, e.id))
+            .min_by_key(|e| (priority_key(e.credentials.priority, invert), e.id))
         {
             if best.id != *current_id {
                 tracing::info!(
@@ -3137,10 +3158,11 @@ impl MultiTokenManager {
                     refresh_failure_count
                 );
 
+                let invert = self.invert_priority.load(Ordering::Relaxed);
                 let has_available = if let Some(next) = entries
                     .iter()
                     .filter(|e| !e.disabled)
-                    .min_by_key(|e| (e.credentials.priority, e.id))
+                    .min_by_key(|e| (priority_key(e.credentials.priority, invert), e.id))
                 {
                     *current_id = next.id;
                     tracing::info!(
@@ -3193,10 +3215,11 @@ impl MultiTokenManager {
                 id
             );
 
+            let invert = self.invert_priority.load(Ordering::Relaxed);
             if let Some(next) = entries
                 .iter()
                 .filter(|e| !e.disabled)
-                .min_by_key(|e| (e.credentials.priority, e.id))
+                .min_by_key(|e| (priority_key(e.credentials.priority, invert), e.id))
             {
                 *current_id = next.id;
                 tracing::info!(
@@ -3223,12 +3246,13 @@ impl MultiTokenManager {
     pub fn switch_to_next(&self) -> bool {
         let entries = self.entries.lock();
         let mut current_id = self.current_id.lock();
+        let invert = self.invert_priority.load(Ordering::Relaxed);
 
         // 选择优先级最高的未禁用凭据（排除当前凭据）
         if let Some(next) = entries
             .iter()
             .filter(|e| !e.disabled && e.id != *current_id)
-            .min_by_key(|e| (e.credentials.priority, e.id))
+            .min_by_key(|e| (priority_key(e.credentials.priority, invert), e.id))
         {
             *current_id = next.id;
             tracing::info!(
@@ -4811,35 +4835,64 @@ impl MultiTokenManager {
         self.load_balancing_mode.lock().clone()
     }
 
-    fn persist_load_balancing_mode(&self, mode: &str) -> anyhow::Result<()> {
-        let mode = mode.to_string();
-        self.update_config_file(move |config| config.load_balancing_mode = mode)
+    /// 获取优先级反转设置（Admin API）
+    pub fn get_invert_priority(&self) -> bool {
+        self.invert_priority.load(Ordering::Relaxed)
     }
 
     /// 设置负载均衡模式（Admin API）
+    #[allow(dead_code)]
     pub fn set_load_balancing_mode(&self, mode: String) -> anyhow::Result<()> {
-        // 验证模式值
-        if mode != "priority" && mode != "balanced" {
-            anyhow::bail!("无效的负载均衡模式: {}", mode);
-        }
+        self.update_load_balancing_settings(Some(&mode), None)
+    }
 
-        let previous_mode = self.get_load_balancing_mode();
-        if previous_mode == mode {
+    /// 设置优先级反转（Admin API）
+    #[allow(dead_code)]
+    pub fn set_invert_priority(&self, invert: bool) -> anyhow::Result<()> {
+        self.update_load_balancing_settings(None, Some(invert))
+    }
+
+    /// 统一更新负载均衡设置（模式与优先级反转）
+    pub fn update_load_balancing_settings(
+        &self,
+        mode: Option<&str>,
+        invert_priority: Option<bool>,
+    ) -> anyhow::Result<()> {
+        let _update_guard = self.runtime_config_update_lock.lock();
+
+        let prev_mode = self.get_load_balancing_mode();
+        let prev_invert = self.get_invert_priority();
+
+        let new_mode = mode.map(|m| m.to_string()).unwrap_or_else(|| prev_mode.clone());
+        if new_mode != "priority" && new_mode != "balanced" {
+            anyhow::bail!("无效的负载均衡模式: {}", new_mode);
+        }
+        let new_invert = invert_priority.unwrap_or(prev_invert);
+
+        if new_mode == prev_mode && new_invert == prev_invert {
             return Ok(());
         }
 
-        *self.load_balancing_mode.lock() = mode.clone();
+        *self.load_balancing_mode.lock() = new_mode.clone();
+        self.invert_priority.store(new_invert, Ordering::Relaxed);
 
-        if let Err(err) = self.persist_load_balancing_mode(&mode) {
-            *self.load_balancing_mode.lock() = previous_mode;
+        let nm = new_mode.clone();
+        if let Err(err) = self.update_config_file(move |config| {
+            config.load_balancing_mode = nm;
+            config.invert_priority = new_invert;
+        }) {
+            *self.load_balancing_mode.lock() = prev_mode;
+            self.invert_priority.store(prev_invert, Ordering::Relaxed);
             return Err(err);
         }
 
-        if mode == "priority" {
-            self.select_highest_priority();
-        }
+        self.select_highest_priority();
 
-        tracing::info!("负载均衡模式已设置为: {}", mode);
+        tracing::info!(
+            "负载均衡配置已更新: mode={}, invert_priority={}",
+            new_mode,
+            new_invert
+        );
         Ok(())
     }
 
@@ -6361,6 +6414,96 @@ mod tests {
         std::fs::remove_file(&config_path).unwrap();
     }
 
+    #[test]
+    fn test_priority_key_calculation() {
+        // invert = false: 原值，小的更小
+        assert_eq!(priority_key(0, false), 0);
+        assert_eq!(priority_key(10, false), 10);
+        assert_eq!(priority_key(100, false), 100);
+
+        // invert = true: 反转，数值越大计算结果越小
+        assert_eq!(priority_key(0, true), u32::MAX);
+        assert_eq!(priority_key(10, true), u32::MAX - 10);
+        assert_eq!(priority_key(100, true), u32::MAX - 100);
+
+        // 比较：100 比 10 大，所以在 invert=true 时 100 的 key 应该小于 10 的 key
+        assert!(priority_key(100, true) < priority_key(10, true));
+        assert!(priority_key(10, true) < priority_key(0, true));
+    }
+
+    #[test]
+    fn test_set_invert_priority_persists_and_switches_credential() {
+        let config_path =
+            std::env::temp_dir().join(format!("kiro-invert-priority-{}.json", uuid::Uuid::new_v4()));
+        std::fs::write(&config_path, r#"{"loadBalancingMode":"priority","invertPriority":false}"#).unwrap();
+
+        let config = Config::load(&config_path).unwrap();
+        let mut cred1 = grouped_cred("c1", &[]);
+        cred1.priority = 0;
+        let mut cred2 = grouped_cred("c2", &[]);
+        cred2.priority = 100;
+
+        let manager =
+            MultiTokenManager::new(config, vec![cred1, cred2], None, None, false)
+                .unwrap();
+
+        // 默认 invert_priority = false，凭据 1 (priority=0) 优先级最高
+        assert_eq!(manager.snapshot().current_id, 1);
+        assert!(!manager.get_invert_priority());
+
+        // 开启优先级反转
+        manager.set_invert_priority(true).unwrap();
+
+        // 内存中立即切换至凭据 2 (priority=100)
+        assert_eq!(manager.snapshot().current_id, 2);
+        assert!(manager.get_invert_priority());
+
+        // 配置文件持久化验证
+        let persisted = Config::load(&config_path).unwrap();
+        assert!(persisted.invert_priority);
+
+        // 切换回 false
+        manager.set_invert_priority(false).unwrap();
+        assert_eq!(manager.snapshot().current_id, 1);
+        assert!(!manager.get_invert_priority());
+
+        std::fs::remove_file(&config_path).unwrap();
+    }
+
+    #[test]
+    fn test_update_load_balancing_settings() {
+        let config_path =
+            std::env::temp_dir().join(format!("kiro-lb-settings-{}.json", uuid::Uuid::new_v4()));
+        std::fs::write(&config_path, r#"{"loadBalancingMode":"priority","invertPriority":false}"#).unwrap();
+
+        let config = Config::load(&config_path).unwrap();
+        let mut cred1 = grouped_cred("c1", &[]);
+        cred1.priority = 10;
+        let mut cred2 = grouped_cred("c2", &[]);
+        cred2.priority = 50;
+
+        let manager =
+            MultiTokenManager::new(config, vec![cred1, cred2], None, None, false)
+                .unwrap();
+
+        assert_eq!(manager.snapshot().current_id, 1);
+
+        // 更新 mode 和 invert_priority
+        manager
+            .update_load_balancing_settings(Some("balanced"), Some(true))
+            .unwrap();
+
+        assert_eq!(manager.get_load_balancing_mode(), "balanced");
+        assert!(manager.get_invert_priority());
+        assert_eq!(manager.snapshot().current_id, 2);
+
+        let persisted = Config::load(&config_path).unwrap();
+        assert_eq!(persisted.load_balancing_mode, "balanced");
+        assert!(persisted.invert_priority);
+
+        std::fs::remove_file(&config_path).unwrap();
+    }
+
     #[tokio::test]
     async fn test_multi_token_manager_acquire_context_auto_recovers_all_disabled() {
         let config = Config::default();
@@ -7748,6 +7891,60 @@ mod tests {
 
         let context = manager.acquire_context(None, None).await.unwrap();
         assert_eq!(context.id, 1);
+    }
+
+    #[tokio::test]
+    async fn test_priority_mode_with_invert_priority_selects_largest() {
+        let mut config = Config::default();
+        config.invert_priority = true;
+
+        let mut low = grouped_cred("low", &[]);
+        low.priority = 10;
+        let mut mid = grouped_cred("mid", &[]);
+        mid.priority = 50;
+        let mut high = grouped_cred("high", &[]);
+        high.priority = 100;
+
+        let manager = MultiTokenManager::new(config, vec![low, mid, high], None, None, false).unwrap();
+
+        // 初始凭据：应当选择 priority 最大的凭据 #3 (priority 100)
+        assert_eq!(manager.snapshot().current_id, 3);
+        let ctx = manager.acquire_context(None, None).await.unwrap();
+        assert_eq!(ctx.id, 3);
+
+        // 禁用 #3，调度自动故障转移到次大凭据 #2 (priority 50)
+        manager.set_disabled(3, true).unwrap();
+        let ctx2 = manager.acquire_context(None, None).await.unwrap();
+        assert_eq!(ctx2.id, 2);
+
+        // 重新启用 #3，由于 #3 优先级更高 (100 > 50)，立即切回 #3
+        manager.set_disabled(3, false).unwrap();
+        let ctx3 = manager.acquire_context(None, None).await.unwrap();
+        assert_eq!(ctx3.id, 3);
+
+        // 运行时关闭优先级反转 (invert_priority = false)，应立即切回数值最小的 #1 (priority 10)
+        manager.set_invert_priority(false).unwrap();
+        assert_eq!(manager.snapshot().current_id, 1);
+        let ctx4 = manager.acquire_context(None, None).await.unwrap();
+        assert_eq!(ctx4.id, 1);
+    }
+
+    #[tokio::test]
+    async fn test_priority_mode_with_invert_priority_breaks_ties_by_id() {
+        let mut config = Config::default();
+        config.invert_priority = true;
+
+        let mut first = grouped_cred("first", &[]);
+        first.priority = 100;
+        let mut second = grouped_cred("second", &[]);
+        second.priority = 100;
+
+        let manager = MultiTokenManager::new(config, vec![first, second], None, None, false).unwrap();
+
+        // 同为 priority 100 时，平局按 ID 升序破平，即 #1 胜出
+        assert_eq!(manager.snapshot().current_id, 1);
+        let ctx = manager.acquire_context(None, None).await.unwrap();
+        assert_eq!(ctx.id, 1);
     }
 
     #[tokio::test]

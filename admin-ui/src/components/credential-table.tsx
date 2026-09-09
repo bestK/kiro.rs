@@ -59,6 +59,7 @@ import {
   useForceRefreshToken,
   useResetSuccessCount,
   useClearThrottle,
+  useLoadBalancingMode,
 } from "@/hooks/use-credentials";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
@@ -187,6 +188,9 @@ export function CredentialTable({
   sortDir,
   onSort,
 }: CredentialTableProps) {
+  const { data: lbData } = useLoadBalancingMode();
+  const invertPriority = lbData?.invertPriority ?? false;
+
   return (
     <div className="overflow-x-auto rounded-xl border border-border bg-card shadow-xs select-none">
       <table className="w-full text-left border-collapse text-xs">
@@ -255,7 +259,11 @@ export function CredentialTable({
               sortDir={sortDir}
               onSort={onSort}
               className="min-w-[85px]"
-              title="点击按调度优先级排序（数值小优先）"
+              title={
+                invertPriority
+                  ? "点击按调度优先级排序（数值大优先）"
+                  : "点击按调度优先级排序（数值小优先）"
+              }
             >
               优先级
             </TableSortHeader>
@@ -371,6 +379,8 @@ function CredentialTableRowComponent({
 
   const [editingPriority, setEditingPriority] = useState(false);
   const [priorityValue, setPriorityValue] = useState(String(credential.priority));
+  const { data: lbData } = useLoadBalancingMode();
+  const invertPriority = lbData?.invertPriority ?? false;
 
   const [showEditDialog, setShowEditDialog] = useState(false);
   const [showUpdateTokenDialog, setShowUpdateTokenDialog] = useState(false);
@@ -437,7 +447,11 @@ function CredentialTableRowComponent({
   const handlePriorityChange = () => {
     const np = parseInt(priorityValue, 10);
     if (isNaN(np) || np < 0) {
-      toast.error("优先级要填 0 或更大的整数，0 最先被使用");
+      toast.error(
+        invertPriority
+          ? "优先级要填 0 或更大的整数，数值大的最先被使用"
+          : "优先级要填 0 或更大的整数，0 最先被使用"
+      );
       return;
     }
     setPriority.mutate(
@@ -722,7 +736,11 @@ function CredentialTableRowComponent({
                   if (!preview) setEditingPriority(true);
                 }}
                 className="inline-flex items-center gap-1 font-mono text-xs font-semibold text-foreground hover:text-primary transition-colors text-left"
-                title="点击修改优先级（数字越小越先被使用）"
+                title={
+                  invertPriority
+                    ? "点击修改优先级（数字越大越先被使用）"
+                    : "点击修改优先级（数字越小越先被使用）"
+                }
               >
                 #{credential.priority}
                 <Pencil className="h-2.5 w-2.5 opacity-40 hover:opacity-100" />

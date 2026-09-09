@@ -585,19 +585,24 @@ pub struct EnableOverageAllResult {
 // ============ 负载均衡配置 ============
 
 /// 负载均衡模式响应
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LoadBalancingModeResponse {
     /// 当前模式（"priority" 或 "balanced"）
     pub mode: String,
+    /// 优先级反转开关（默认 false：数字小的优先；true：数字大的优先）
+    #[serde(default)]
+    pub invert_priority: bool,
 }
 
 /// 设置负载均衡模式请求
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SetLoadBalancingModeRequest {
-    /// 模式（"priority" 或 "balanced"）
-    pub mode: String,
+    /// 模式（"priority" 或 "balanced"，可选）
+    pub mode: Option<String>,
+    /// 优先级反转开关（可选）
+    pub invert_priority: Option<bool>,
 }
 
 /// 账号级风控故障转移配置响应

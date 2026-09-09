@@ -61,6 +61,7 @@ function LoadBalancingGroup() {
   const { data, isLoading } = useLoadBalancingMode()
   const { mutate } = useSetLoadBalancingMode()
   const saver = useFieldSaver(mutate, reportSaveError)
+  const invertPriority = data?.invertPriority ?? false
 
   return (
     <SettingGroup
@@ -68,9 +69,14 @@ function LoadBalancingGroup() {
       description="控制多账号并发时调度器的路由策略"
       icon={<Gauge className="h-4 w-4" />}
       badge={
-        <Badge variant="outline" className="text-[11px] font-mono">
-          {data?.mode === 'balanced' ? '均衡负载' : '按优先级'}
-        </Badge>
+        <div className="flex items-center gap-1.5">
+          <Badge variant="outline" className="text-[11px] font-mono">
+            {data?.mode === 'balanced' ? '均衡负载' : '按优先级'}
+          </Badge>
+          <Badge variant={invertPriority ? 'default' : 'secondary'} className="text-[11px] font-mono">
+            {invertPriority ? '数字大优先' : '数字小优先'}
+          </Badge>
+        </div>
       }
     >
       <SettingSegments
@@ -78,16 +84,35 @@ function LoadBalancingGroup() {
         hint={
           data?.mode === 'balanced'
             ? '按用量动态挑选凭据，把请求摊平到整个池子'
-            : '按优先级数字从小到大用：先用完 0 号，再换 1 号'
+            : invertPriority
+              ? '按优先级数字从大到小用：数字越大约优先'
+              : '按优先级数字从小到大用：先用完 0 号，再换 1 号'
         }
         value={data?.mode ?? 'priority'}
         options={[
-          { value: 'priority', label: '按优先级', hint: '小数字先用，顺序耗尽' },
+          {
+            value: 'priority',
+            label: '按优先级',
+            hint: invertPriority ? '大数字先用，顺序耗尽' : '小数字先用，顺序耗尽',
+          },
           { value: 'balanced', label: '均衡负载', hint: '按用量动态摊平' },
         ]}
-        onChange={(next) => saver.save('mode', next)}
+        onChange={(next) => saver.save('mode', { mode: next as 'priority' | 'balanced' })}
         pending={saver.isSaving('mode')}
         saved={saver.isSaved('mode')}
+        disabled={isLoading}
+      />
+      <SettingSwitch
+        label="优先级反转"
+        hint={
+          invertPriority
+            ? '已开启：数字越大优先级越高（如 100 > 10 > 0）'
+            : '未开启（默认）：数字越小优先级越高（0 最优先）'
+        }
+        checked={invertPriority}
+        onChange={(next) => saver.save('invertPriority', { invertPriority: next })}
+        pending={saver.isSaving('invertPriority')}
+        saved={saver.isSaved('invertPriority')}
         disabled={isLoading}
       />
     </SettingGroup>

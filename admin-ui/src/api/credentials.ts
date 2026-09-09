@@ -457,15 +457,28 @@ export async function assignProxiesRoundRobin(
   return data
 }
 
-// 获取负载均衡模式
-export async function getLoadBalancingMode(): Promise<{ mode: 'priority' | 'balanced' }> {
-  const { data } = await api.get<{ mode: 'priority' | 'balanced' }>('/config/load-balancing')
+export interface LoadBalancingConfig {
+  mode: 'priority' | 'balanced'
+  invertPriority: boolean
+}
+
+export interface SetLoadBalancingPayload {
+  mode?: 'priority' | 'balanced'
+  invertPriority?: boolean
+}
+
+// 获取负载均衡模式与优先级配置
+export async function getLoadBalancingMode(): Promise<LoadBalancingConfig> {
+  const { data } = await api.get<LoadBalancingConfig>('/config/load-balancing')
   return data
 }
 
-// 设置负载均衡模式
-export async function setLoadBalancingMode(mode: 'priority' | 'balanced'): Promise<{ mode: 'priority' | 'balanced' }> {
-  const { data } = await api.put<{ mode: 'priority' | 'balanced' }>('/config/load-balancing', { mode })
+// 设置负载均衡模式与优先级配置
+export async function setLoadBalancingMode(
+  payload: 'priority' | 'balanced' | SetLoadBalancingPayload
+): Promise<LoadBalancingConfig> {
+  const body = typeof payload === 'string' ? { mode: payload } : payload
+  const { data } = await api.put<LoadBalancingConfig>('/config/load-balancing', body)
   return data
 }
 

@@ -32,7 +32,7 @@ export const DetailDrawer = memo(function DetailDrawer({
         <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/50 duration-150 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0" />
         <DialogPrimitive.Content
           className={cn(
-            'console-drawer console-scope fixed right-0 top-0 z-50 flex h-full w-[calc(100%-1.5rem)] flex-col border-l border-border bg-card shadow-2xl duration-150 will-change-transform',
+            'console-drawer console-scope fixed right-0 top-0 z-50 flex h-full w-[calc(100%-1.5rem)] flex-col border-l border-border bg-card shadow-2xl duration-150',
             width,
           )}
         >

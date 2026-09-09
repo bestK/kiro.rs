@@ -166,7 +166,7 @@ export function FloatingSectionNav({ items, className }: FloatingSectionNavProps
         'fixed right-3.5 lg:right-6 top-1/2 -translate-y-1/2 z-40',
         'hidden md:flex flex-col items-end gap-1.5 py-2.5 px-1.5',
         'rounded-2xl bg-card/90 dark:bg-card/80 border border-border/60 shadow-xs hover:shadow-md',
-        'select-none transition-shadow duration-200 [transform:translateZ(0)] will-change-transform',
+        'select-none transition-shadow duration-200',
         className
       )}
     >

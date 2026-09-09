@@ -305,7 +305,7 @@ function GatewayTelemetryBanner({
   hasErrors: boolean
 }) {
   return (
-    <div className="relative overflow-hidden rounded-xl border border-border/70 bg-gradient-to-r from-card/90 via-card/70 to-card/90 p-3.5 shadow-xs backdrop-blur-md">
+    <div className="relative overflow-hidden rounded-xl border border-border bg-card p-3.5 shadow-xs">
       <div className="flex flex-wrap items-center justify-between gap-3 text-xs">
         {/* 左侧：服务状态与并发吞吐 */}
         <div className="flex flex-wrap items-center gap-3 sm:gap-4">
@@ -482,7 +482,7 @@ function HeroKpiGrid({
   return (
     <div className="grid grid-cols-2 gap-3 max-[380px]:grid-cols-1 lg:grid-cols-5">
       {/* 1. API 调用总量 */}
-      <Card className="group relative overflow-hidden border border-border/70 bg-card transition-all duration-200 hover:border-blue-500/40 hover:shadow-sm">
+      <Card className="group relative overflow-hidden border border-border bg-card transition-all duration-200 hover:border-blue-500/40 hover:shadow-sm">
         <CardContent className="p-3.5 sm:p-4">
           <div className="flex items-center justify-between">
             <span className="text-xs font-medium text-muted-foreground">API 调用量</span>
@@ -501,7 +501,7 @@ function HeroKpiGrid({
               {stats.errors > 0 ? `异常 ${formatNumber(stats.errors)}` : '零故障'}
             </Badge>
           </div>
-          <div className="mt-2 flex items-center justify-between text-[11px] text-muted-foreground/80 border-t border-border/40 pt-2 font-mono">
+          <div className="mt-2 flex items-center justify-between text-[11px] text-muted-foreground border-t border-border pt-2 font-mono">
             <span>成功率</span>
             <span className="font-semibold text-emerald-600 dark:text-emerald-400">{successRate}%</span>
           </div>
@@ -509,7 +509,7 @@ function HeroKpiGrid({
       </Card>
 
       {/* 2. Token 总吞吐 */}
-      <Card className="group relative overflow-hidden border border-border/70 bg-card transition-all duration-200 hover:border-emerald-500/40 hover:shadow-sm">
+      <Card className="group relative overflow-hidden border border-border bg-card transition-all duration-200 hover:border-emerald-500/40 hover:shadow-sm">
         <CardContent className="p-3.5 sm:p-4">
           <div className="flex items-center justify-between">
             <span className="text-xs font-medium text-muted-foreground">Token 总吞吐</span>
@@ -525,7 +525,7 @@ function HeroKpiGrid({
               均次 {formatNumber(avgTokens)}
             </span>
           </div>
-          <div className="mt-2 flex items-center justify-between text-[11px] text-muted-foreground/80 border-t border-border/40 pt-2 font-mono">
+          <div className="mt-2 flex items-center justify-between text-[11px] text-muted-foreground border-t border-border pt-2 font-mono">
             <span>入 {formatNumber(stats.inputTokens)}</span>
             <span>出 {formatNumber(stats.outputTokens)}</span>
           </div>
@@ -533,7 +533,7 @@ function HeroKpiGrid({
       </Card>
 
       {/* 3. Prompt 缓存效能 */}
-      <Card className="group relative overflow-hidden border border-border/70 bg-card transition-all duration-200 hover:border-cyan-500/40 hover:shadow-sm">
+      <Card className="group relative overflow-hidden border border-border bg-card transition-all duration-200 hover:border-cyan-500/40 hover:shadow-sm">
         <CardContent className="p-3.5 sm:p-4">
           <div className="flex items-center justify-between">
             <span className="text-xs font-medium text-muted-foreground">缓存命中率</span>
@@ -549,7 +549,7 @@ function HeroKpiGrid({
               省流加速
             </Badge>
           </div>
-          <div className="mt-2 flex items-center justify-between text-[11px] text-muted-foreground/80 border-t border-border/40 pt-2 font-mono">
+          <div className="mt-2 flex items-center justify-between text-[11px] text-muted-foreground border-t border-border pt-2 font-mono">
             <span>读 {formatNumber(stats.cacheReadTokens)}</span>
             <span>写 {formatNumber(stats.cacheCreationTokens)}</span>
           </div>
@@ -557,7 +557,7 @@ function HeroKpiGrid({
       </Card>
 
       {/* 4. Credit 消耗估算 */}
-      <Card className="group relative overflow-hidden border border-border/70 bg-card transition-all duration-200 hover:border-pink-500/40 hover:shadow-sm">
+      <Card className="group relative overflow-hidden border border-border bg-card transition-all duration-200 hover:border-pink-500/40 hover:shadow-sm">
         <CardContent className="p-3.5 sm:p-4">
           <div className="flex items-center justify-between">
             <span className="text-xs font-medium text-muted-foreground">Credit 消耗</span>
@@ -571,7 +571,7 @@ function HeroKpiGrid({
             </span>
             <span className="text-[10px] font-mono text-muted-foreground">上游计费折算</span>
           </div>
-          <div className="mt-2 flex items-center justify-between text-[11px] text-muted-foreground/80 border-t border-border/40 pt-2 font-mono">
+          <div className="mt-2 flex items-center justify-between text-[11px] text-muted-foreground border-t border-border pt-2 font-mono">
             <span>均次消耗</span>
             <span>${avgCredit}</span>
           </div>
@@ -579,7 +579,7 @@ function HeroKpiGrid({
       </Card>
 
       {/* 5. 调度负载与拓扑 */}
-      <Card className="col-span-2 max-[380px]:col-span-1 lg:col-span-1 group relative overflow-hidden border border-border/70 bg-card transition-all duration-200 hover:border-purple-500/40 hover:shadow-sm">
+      <Card className="col-span-2 max-[380px]:col-span-1 lg:col-span-1 group relative overflow-hidden border border-border bg-card transition-all duration-200 hover:border-purple-500/40 hover:shadow-sm">
         <CardContent className="p-3.5 sm:p-4">
           <div className="flex items-center justify-between">
             <span className="text-xs font-medium text-muted-foreground">并发与拓扑</span>
@@ -595,7 +595,7 @@ function HeroKpiGrid({
             </span>
             <span className="font-mono text-xs text-muted-foreground">{currentRpmTotal} RPM</span>
           </div>
-          <div className="mt-2 flex items-center justify-between text-[11px] text-muted-foreground/80 border-t border-border/40 pt-2 font-mono">
+          <div className="mt-2 flex items-center justify-between text-[11px] text-muted-foreground border-t border-border pt-2 font-mono">
             <span>就绪上游 {healthyCreds}/{totalCreds}</span>
             <span>入口 {activeKeys} Key</span>
           </div>

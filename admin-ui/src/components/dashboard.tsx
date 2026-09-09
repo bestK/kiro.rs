@@ -2285,7 +2285,7 @@ export function Dashboard({ onLogout, embedded = false }: DashboardProps) {
                     onSort={applySort}
                   />
                 ) : (
-                  <div className="grid select-none gap-3 sm:gap-4 md:grid-cols-2 lg:grid-cols-3 [transform:translateZ(0)]">
+                  <div className="grid select-none gap-3 sm:gap-4 md:grid-cols-2 lg:grid-cols-3">
                     {currentCredentials.map((credential) => (
                       <CredentialCard
                         key={credential.id}

@@ -188,9 +188,9 @@ export function CredentialTable({
   onSort,
 }: CredentialTableProps) {
   return (
-    <div className="overflow-x-auto rounded-xl border border-border/70 bg-card shadow-xs select-none">
+    <div className="overflow-x-auto rounded-xl border border-border bg-card shadow-xs select-none">
       <table className="w-full text-left border-collapse text-xs">
-        <thead className="sticky top-0 z-10 bg-muted/80 dark:bg-muted/50 backdrop-blur-md border-b border-border/80">
+        <thead className="sticky top-0 z-10 bg-muted border-b border-border">
           <tr className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
             {/* 勾选 & 拖拽 & 序号 */}
             <th className="w-12 min-w-[50px] py-2.5 pl-3 pr-1 text-center">

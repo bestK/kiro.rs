@@ -812,7 +812,7 @@ function CredentialCardImpl({
       ref={setNodeRef}
       style={dragStyle}
       data-credential-id={credential.id}
-      className={`group flex min-w-0 items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 transition-colors sm:gap-3 sm:px-3.5 [transform:translateZ(0)] ${railBorderClass(
+      className={`group flex min-w-0 items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 transition-colors sm:gap-3 sm:px-3.5 ${railBorderClass(
         disposition.tone,
       )} ${
         isDragging
@@ -1115,12 +1115,12 @@ function CredentialCardImpl({
           ref={setNodeRef}
           style={dragStyle}
           data-credential-id={credential.id}
-          className={`group flex h-full min-w-0 flex-col overflow-hidden rounded-lg border border-border bg-card shadow-xs transition-colors duration-100 [transform:translateZ(0)] ${
+          className={`group flex h-full min-w-0 flex-col overflow-hidden rounded-lg border border-border bg-card shadow-xs transition-colors duration-100 ${
             isDragging ? "shadow-md opacity-80" : "hover:border-primary/40"
           } ${stateClasses}`}
         >
           {/* Card Header: 选择框 + Title + 呼吸指示 + 禁用开关 */}
-          <CardHeader className="p-4 pb-3 sm:p-4 sm:pb-3 border-b border-border/40 bg-muted/20">
+          <CardHeader className="p-4 pb-3 sm:p-4 sm:pb-3 border-b border-border bg-muted/40">
             <div className="flex min-w-0 items-center justify-between gap-2">
               <div className="flex min-w-0 flex-1 items-center gap-2.5">
                 <label
@@ -1298,7 +1298,7 @@ function CredentialCardImpl({
             </div>
 
             {/* Status & Ledger Section */}
-            <div className="space-y-1 border-t border-border/40 pt-3 px-3 text-[12px]">
+            <div className="space-y-1 border-t border-border pt-3 px-3 text-[12px]">
               <CardSectionTitle icon={Activity}>运行与账号信息</CardSectionTitle>
               {groupingBlock && <div className="py-1">{groupingBlock}</div>}
               <LedgerRow label="凭据类型">
@@ -1374,13 +1374,13 @@ function CredentialCardImpl({
 
                   <Progress value={balance.usagePercentage} className="h-1.5 bg-muted" />
 
-                  <div className="grid grid-cols-2 gap-1 text-[11px] font-mono text-muted-foreground pt-1 border-t border-border/30">
+                  <div className="grid grid-cols-2 gap-1 text-[11px] font-mono text-muted-foreground pt-1 border-t border-border">
                     <div>已用: ${formatBalance(balance.currentUsage)}</div>
                     <div className="text-right">上限: ${formatBalance(balance.usageLimit)}</div>
                   </div>
 
                   {balance.nextResetAt && (
-                    <div className="flex items-center justify-between text-[11px] font-mono text-muted-foreground/80 pt-0.5">
+                    <div className="flex items-center justify-between text-[11px] font-mono text-muted-foreground pt-0.5">
                       <span>下次重置</span>
                       <span>{formatResetDate(balance.nextResetAt)}</span>
                     </div>
@@ -1403,7 +1403,7 @@ function CredentialCardImpl({
             </div>
 
             {/* Connection Details 手风琴展开面板 */}
-            <div className="rounded-xl border border-border/40 bg-card/40 overflow-hidden">
+            <div className="rounded-xl border border-border bg-card overflow-hidden">
               <button
                 type="button"
                 className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-accent/40 transition-colors"
@@ -1418,7 +1418,7 @@ function CredentialCardImpl({
                 />
               </button>
               {connectionExpanded && (
-                <div className="px-3 pb-2.5 pt-1 space-y-1 border-t border-border/30 text-[12px]">
+                <div className="px-3 pb-2.5 pt-1 space-y-1 border-t border-border text-[12px]">
                   {credential.endpoint && (
                     <LedgerRow label="端点" icon={Server}>
                       <span>{endpointDisplayLabel(credential.endpoint)}</span>
@@ -1469,7 +1469,7 @@ function CredentialCardImpl({
 
             {/* 底栏 ToolBar */}
             {preview ? (
-              <div className="mt-auto flex items-center justify-end gap-2 pt-2.5 border-t border-border/40">
+              <div className="mt-auto flex items-center justify-end gap-2 pt-2.5 border-t border-border">
                 <Button size="icon" variant="ghost" className="h-8 w-8" disabled title="预览">
                   <RefreshCw className="h-4 w-4" />
                 </Button>
@@ -1484,7 +1484,7 @@ function CredentialCardImpl({
                 </Button>
               </div>
             ) : (
-              <div className="mt-auto flex min-w-0 items-center gap-2 pt-2.5 border-t border-border/40">
+              <div className="mt-auto flex min-w-0 items-center gap-2 pt-2.5 border-t border-border">
                 {!dragDisabled && (
                   <Button
                     ref={setActivatorNodeRef}

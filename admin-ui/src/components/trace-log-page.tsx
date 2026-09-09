@@ -220,7 +220,7 @@ function CredentialCell({ rec }: { rec: TraceRecord }) {
 function AttemptCell({ rec }: { rec: TraceRecord }) {
   const attempts = rec.attempts ?? []
   if (attempts.length <= 1) {
-    return <span className="text-xs text-gray-400 dark:text-gray-500 font-mono">-</span>
+    return <span className="text-xs text-muted-foreground font-mono">-</span>
   }
 
   return (
@@ -262,7 +262,7 @@ function TokensCell({ rec }: { rec: TraceRecord }) {
   const promptTotal = input + cacheCreation + cacheRead
 
   if (total === 0) {
-    return <span className="text-xs text-gray-400 dark:text-gray-500 font-mono">-</span>
+    return <span className="text-xs text-muted-foreground font-mono">-</span>
   }
 
   const hitRatio =
@@ -381,7 +381,7 @@ function CostCell({
   const status = rec.downstreamStatus
 
   if (!hasCredits && profit == null && status !== 'found') {
-    return <span className="text-xs text-gray-400 dark:text-gray-500 font-mono">-</span>
+    return <span className="text-xs text-muted-foreground font-mono">-</span>
   }
 
   // 红盈绿亏：盈利为正显示红色，亏损为负显示绿色，零为中性灰色
@@ -391,7 +391,7 @@ function CostCell({
     ? 'text-rose-600 dark:text-rose-400'
     : isLoss
       ? 'text-emerald-600 dark:text-emerald-400'
-      : 'text-gray-500 dark:text-gray-400'
+      : 'text-muted-foreground'
 
   const profitSign = isProfit ? '+' : isLoss ? '-' : ''
   const profitText = profit != null ? `${profitSign}$${Math.abs(profit).toFixed(4)}` : null
@@ -409,7 +409,7 @@ function CostCell({
       {revenue != null || profitText ? (
         <div className="flex items-center gap-1.5 text-[11px] tabular-nums leading-tight cursor-help">
           {revenue != null && (
-            <span className="text-gray-500 dark:text-gray-400 font-normal">
+            <span className="text-muted-foreground font-normal">
               ${revenue.toFixed(4)}
             </span>
           )}
@@ -421,7 +421,7 @@ function CostCell({
           )}
         </div>
       ) : status === 'not_found' ? (
-        <div className="text-[10px] text-muted-foreground/50 font-sans">
+        <div className="text-[11px] text-muted-foreground font-sans">
           未关联下游
         </div>
       ) : null}
@@ -527,7 +527,7 @@ function LatencyCell({ rec }: { rec: TraceRecord }) {
 
   const ttftColor =
     ttftLevel == null
-      ? 'text-gray-400 dark:text-gray-500'
+      ? 'text-muted-foreground'
       : ttftLevel === 'fast' || ttftLevel === 'normal'
         ? 'text-emerald-600 dark:text-emerald-400'
         : ttftLevel === 'slow'
@@ -538,11 +538,11 @@ function LatencyCell({ rec }: { rec: TraceRecord }) {
     <div className="flex items-stretch gap-2.5">
       <span className={cn('w-1 shrink-0 rounded-full', barColor)} aria-hidden="true" />
       <div className="grid grid-cols-[max-content_max-content] items-baseline gap-x-2 gap-y-0.5 text-xs">
-        <span className="text-gray-400 dark:text-gray-500 text-[11px]">首字</span>
+        <span className="text-muted-foreground text-[11px]">首字</span>
         <span className={cn('font-medium tabular-nums font-mono', ttftColor)}>
           {firstTokenMs != null ? formatDuration(firstTokenMs) : '-'}
         </span>
-        <span className="text-gray-400 dark:text-gray-500 text-[11px]">耗时</span>
+        <span className="text-muted-foreground text-[11px]">耗时</span>
         <span className="font-medium tabular-nums font-mono text-gray-900 dark:text-white">
           {formatDuration(durationMs)}
         </span>
@@ -555,7 +555,7 @@ function LatencyCell({ rec }: { rec: TraceRecord }) {
 function RequestIdCell({ traceId }: { traceId: string }) {
   return (
     <div className="flex max-w-[140px] items-center gap-1.5 text-xs">
-      <span className="truncate font-mono text-gray-500 dark:text-gray-400" title={traceId}>
+      <span className="truncate font-mono text-muted-foreground" title={traceId}>
         {traceId}
       </span>
       <button
@@ -778,7 +778,7 @@ function useTraceColumns({
               {r.downstreamUsername}
             </button>
           ) : (
-            <span className="text-xs text-muted-foreground/50 font-mono">-</span>
+            <span className="text-xs text-muted-foreground font-mono">-</span>
           ),
       },
 
@@ -801,7 +801,7 @@ function useTraceColumns({
               {r.clientIp}
             </button>
           ) : (
-            <span className="text-xs text-muted-foreground/50 font-mono">-</span>
+            <span className="text-xs text-muted-foreground font-mono">-</span>
           ),
       },
       {
@@ -823,7 +823,7 @@ function useTraceColumns({
               {shortSession(r.sessionId)}
             </button>
           ) : (
-            <span className="text-xs text-muted-foreground/50 font-mono">-</span>
+            <span className="text-xs text-muted-foreground font-mono">-</span>
           ),
       },
     ],
@@ -1017,7 +1017,7 @@ const TRACE_NAV_ITEMS: NavSectionItem[] = [
       {/* 统计指标汇总栏 */}
       <div id="traces-stats" className="grid grid-cols-2 gap-3 max-[480px]:grid-cols-1 lg:grid-cols-4">
         {/* 1. 消耗积分 */}
-        <Card className="border border-border/70 bg-card transition-all duration-200 hover:border-primary/40 hover:shadow-xs">
+        <Card className="border border-border bg-card transition-all duration-200 hover:border-primary/40 hover:shadow-xs">
           <CardContent className="p-3.5 sm:p-4">
             <div className="flex items-center justify-between">
               <span className="text-xs font-medium text-muted-foreground">消耗积分</span>
@@ -1031,7 +1031,7 @@ const TRACE_NAV_ITEMS: NavSectionItem[] = [
               </span>
               <span className="text-[11px] text-muted-foreground font-mono">credits</span>
             </div>
-            <div className="mt-2 flex items-center justify-between text-[11px] text-muted-foreground/80 border-t border-border/40 pt-2 font-mono">
+            <div className="mt-2 flex items-center justify-between text-[11px] text-muted-foreground border-t border-border pt-2 font-mono">
               <span>匹配请求</span>
               <span className="font-semibold text-foreground">{stats.matchedCount.toLocaleString()} 次</span>
             </div>
@@ -1039,7 +1039,7 @@ const TRACE_NAV_ITEMS: NavSectionItem[] = [
         </Card>
 
         {/* 2. 下游收费总金额 */}
-        <Card className="border border-border/70 bg-card transition-all duration-200 hover:border-sky-500/40 hover:shadow-xs">
+        <Card className="border border-border bg-card transition-all duration-200 hover:border-sky-500/40 hover:shadow-xs">
           <CardContent className="p-3.5 sm:p-4">
             <div className="flex items-center justify-between">
               <span className="text-xs font-medium text-muted-foreground">下游收费总金额</span>
@@ -1053,7 +1053,7 @@ const TRACE_NAV_ITEMS: NavSectionItem[] = [
               </span>
               <span className="text-[11px] text-muted-foreground font-mono">USD</span>
             </div>
-            <div className="mt-2 flex items-center justify-between text-[11px] text-muted-foreground/80 border-t border-border/40 pt-2 font-mono">
+            <div className="mt-2 flex items-center justify-between text-[11px] text-muted-foreground border-t border-border pt-2 font-mono">
               <span>消耗额度</span>
               <span className="font-semibold text-foreground">{stats.totalQuota.toLocaleString()}</span>
             </div>
@@ -1061,7 +1061,7 @@ const TRACE_NAV_ITEMS: NavSectionItem[] = [
         </Card>
 
         {/* 3. 采购总成本 */}
-        <Card className="border border-border/70 bg-card transition-all duration-200 hover:border-amber-500/40 hover:shadow-xs">
+        <Card className="border border-border bg-card transition-all duration-200 hover:border-amber-500/40 hover:shadow-xs">
           <CardContent className="p-3.5 sm:p-4">
             <div className="flex items-center justify-between">
               <span className="text-xs font-medium text-muted-foreground">采购总成本</span>
@@ -1075,7 +1075,7 @@ const TRACE_NAV_ITEMS: NavSectionItem[] = [
               </span>
               <span className="text-[11px] text-muted-foreground font-mono">USD</span>
             </div>
-            <div className="mt-2 flex items-center justify-between text-[11px] text-muted-foreground/80 border-t border-border/40 pt-2 font-mono">
+            <div className="mt-2 flex items-center justify-between text-[11px] text-muted-foreground border-t border-border pt-2 font-mono">
               <span>折算单价</span>
               <span className="font-semibold text-foreground">
                 ${stats.totalCredits > 0 ? (stats.totalCost / stats.totalCredits).toFixed(6) : '0.000000'} / 分
@@ -1085,7 +1085,7 @@ const TRACE_NAV_ITEMS: NavSectionItem[] = [
         </Card>
 
         {/* 4. 净盈亏（红盈绿亏） */}
-        <Card className="border border-border/70 bg-card transition-all duration-200 hover:border-border hover:shadow-xs">
+        <Card className="border border-border bg-card transition-all duration-200 hover:border-border hover:shadow-xs">
           <CardContent className="p-3.5 sm:p-4">
             <div className="flex items-center justify-between">
               <span className="text-xs font-medium text-muted-foreground">核算净盈亏</span>
@@ -1134,7 +1134,7 @@ const TRACE_NAV_ITEMS: NavSectionItem[] = [
                 {stats.totalProfit > 0 ? '盈利' : stats.totalProfit < 0 ? '亏损' : '持平'}
               </Badge>
             </div>
-            <div className="mt-2 flex items-center justify-between text-[11px] text-muted-foreground/80 border-t border-border/40 pt-2 font-mono">
+            <div className="mt-2 flex items-center justify-between text-[11px] text-muted-foreground border-t border-border pt-2 font-mono">
               <span>核算状态</span>
               <span className="font-semibold text-foreground">
                 {stats.totalRevenue > 0 || stats.totalCost > 0 ? '已核算' : '无下游数据'}

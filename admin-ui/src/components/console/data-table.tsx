@@ -229,7 +229,7 @@ function ConsoleTableImpl<T>({
         </div>
       )}
 
-      <div className="overflow-x-auto rounded-xl border border-border/60 bg-card [transform:translateZ(0)]">
+      <div className="overflow-x-auto rounded-xl border border-border/60 bg-card">
         <table className={cn('console-table', variant === 'relaxed' && 'console-table-relaxed')}>
           <thead>
             <tr>

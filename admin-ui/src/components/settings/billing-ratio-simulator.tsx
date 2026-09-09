@@ -133,13 +133,13 @@ export function BillingRatioSimulator({ currentCreditPrice }: BillingRatioSimula
         ? `官方 ${(ratio * 10).toFixed(1)} 折超级福利`
         : `官方 ${(ratio * 10).toFixed(1)} 折特惠`
 
-    return `### 🌟 本站 API 计费口径与模型价格说明
+    return `### 本站 API 计费口径与模型价格说明
 
 本站采用国际通用的 **【官方标准单价 × ${ratio}x 倍率】** 模式透明计费，所有模型基于 Anthropic / OpenAI 官方标准价格打折，支持完整 Prompt Caching 自动缓存命中！
 
 ---
 
-#### 📌 核心计费公式
+#### 核心计费公式
 \`\`\`text
 实际扣费 = (普通输入Tokens × 官方输入单价 + 缓存读取Tokens × 官方缓存单价 + 输出Tokens × 官方输出单价) × ${ratio}
 \`\`\`
@@ -151,7 +151,7 @@ export function BillingRatioSimulator({ currentCreditPrice }: BillingRatioSimula
 
 ---
 
-#### 📊 热门模型实收单价对照表 (每 100 万 Tokens)
+#### 热门模型实收单价对照表 (每 100 万 Tokens)
 
 | 模型名称 | 官方原价 (输入/输出) | 本站实收价格 (${ratio}x) | 缓存读取特惠 |
 | :--- | :--- | :--- | :--- |
@@ -164,7 +164,7 @@ ${POPULAR_MODELS.map((m) => {
 
 ---
 
-#### 💡 典型请求实测示例 (以 Claude 3.7 Sonnet 为例)
+#### 典型请求实测示例 (以 Claude 3.7 Sonnet 为例)
 - 一次典型编程/聊天请求：输入 2,500 Tokens，输出 800 Tokens，缓存命中 18,000 Tokens
 - 官方原价消费：**$${simOfficialCostUsd.toFixed(4)} USD**
 - 本站 ${ratio}x 实收：**$${simCustomerBilledUsd.toFixed(4)} USD** (约 ${simCustomerQuota.toLocaleString()} Quota)
@@ -181,7 +181,7 @@ ${POPULAR_MODELS.map((m) => {
 
   return (
     <div className="space-y-4">
-      {/* ⚠️ 核心声明提示：告知用户此模块仅为对外话术文案与价格换算预览，不影响 Kiro 运行时 Token 计算 */}
+      {/* 核心声明提示：告知用户此模块仅为对外话术文案与价格换算预览，不影响 Kiro 运行时 Token 计算 */}
       <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3.5 space-y-2 text-xs">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2">

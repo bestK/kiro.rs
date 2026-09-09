@@ -36,7 +36,7 @@ use super::{
         stats_by_credential, stats_by_key, stats_by_model, stats_overview, stats_timeseries,
         test_model,
         trace_failure_stats, update_admin_key, update_client_key, update_credential, update_group,
-        update_refresh_token,
+        update_refresh_token, assign_group_credentials_by_filter, preview_credentials_filter,
     },
     middleware::{AdminState, admin_auth_middleware},
 };
@@ -231,6 +231,11 @@ pub fn create_admin_router(state: AdminState) -> Router {
         .route("/client-keys/{id}/rotate", post(rotate_client_key))
         .route("/groups", get(list_groups).post(create_group))
         .route("/groups/{name}", delete(delete_group).patch(update_group))
+        .route(
+            "/groups/{name}/assign-by-filter",
+            post(assign_group_credentials_by_filter),
+        )
+        .route("/credentials/preview-filter", post(preview_credentials_filter))
         .route("/stats/overview", get(stats_overview))
         .route("/stats/timeseries", get(stats_timeseries))
         .route("/stats/by-model", get(stats_by_model))

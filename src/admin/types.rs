@@ -1463,15 +1463,17 @@ impl AdminErrorResponse {
 // ============ 账号分组（独立实体）============
 
 /// 单条分组（列表项）
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GroupItem {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     pub created_at: String,
-    /// 引用计数：有多少个凭据带这个分组（前端展示 / 删除前提醒）
+    /// 直接归属凭据数
     pub credential_count: usize,
+    /// 有效凭据数（包含直接归属和启用的引用子分组，去重）
+    pub effective_credential_count: usize,
     /// 引用计数：有多少把客户端 Key 绑定这个分组
     pub client_key_count: usize,
     /// 是否开启按积分返回 Token（None 表示继承全局配置）
@@ -1480,6 +1482,12 @@ pub struct GroupItem {
     /// 该分组 1 积分对应的金额（None 表示继承全局配置）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub credit_price: Option<f64>,
+    /// 本分组引用的其他分组列表
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub references: Vec<crate::admin::groups::GroupReference>,
+    /// 哪些其他分组引用了本分组
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub referenced_by: Vec<String>,
 }
 
 /// 分组列表响应
@@ -1518,9 +1526,14 @@ pub struct CreateGroupRequest {
     pub token_by_credit_enabled: Option<bool>,
     #[serde(default)]
     pub credit_price: Option<f64>,
+    #[serde(default)]
+    pub references: Option<Vec<crate::admin::groups::GroupReference>>,
+    /// 可选：创建分组后立即按字段条件自动归入匹配的凭据
+    #[serde(default)]
+    pub auto_assign_filter: Option<CredentialFilterCriteria>,
 }
 
-/// 更新分组请求（改名 / 改备注 / 改积分返回配置）
+/// 更新分组请求（改名 / 改备注 / 改积分返回配置 / 改引用）
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateGroupRequest {
@@ -1542,6 +1555,9 @@ pub struct UpdateGroupRequest {
     /// 是否重置金额设置为继承
     #[serde(default)]
     pub reset_credit_price: Option<bool>,
+    /// 引用的其他分组列表；传入则覆盖更新
+    #[serde(default)]
+    pub references: Option<Vec<crate::admin::groups::GroupReference>>,
 }
 
 /// 删除分组的可选查询参数
@@ -1551,6 +1567,104 @@ pub struct DeleteGroupQuery {
     /// 强制删除：即使仍有引用也删；同时级联清理凭据 / Key 的引用
     #[serde(default)]
     pub force: bool,
+}
+
+/// 凭据字段条件筛选规则
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CredentialFilterCriteria {
+    /// 临期时间范围: "all" / "expired" / "1d" / "3d" / "7d" / "14d" / "30d" / "{N}d"
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expiry_window: Option<String>,
+    /// 订阅类型（不区分大小写，支持模糊/多选）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subscription_titles: Option<Vec<String>>,
+    /// 账号启用状态: "all" / "active" / "disabled"
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    /// 账号类型: "normal" / "boom"
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credential_types: Option<Vec<String>>,
+    /// 在售状态: "not_for_sale" / "for_sale" / "sold"
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sale_statuses: Option<Vec<String>>,
+    /// 认证方式: "social" / "idc" / "external_idp" / "api_key"
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_methods: Option<Vec<String>>,
+    /// 邮箱包含文本 (忽略大小写)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub email_contains: Option<String>,
+    /// 来源渠道包含文本 (忽略大小写)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_channel_contains: Option<String>,
+    /// 现有分组状态: "all" / "unassigned" / "has_group" / "not_in_group"
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group_presence: Option<String>,
+}
+
+/// 账号归入模式
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum AssignMode {
+    /// 追加模式（默认）：将匹配的账号加入该分组，已有账号与原有其他分组不变
+    #[default]
+    Append,
+    /// 覆盖模式：使该分组仅包含符合条件的账号（不符合条件的从该分组移出）
+    Replace,
+}
+
+/// 按条件归入账号到分组的请求
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AssignByFilterRequest {
+    pub filter: CredentialFilterCriteria,
+    #[serde(default)]
+    pub mode: AssignMode,
+}
+
+/// 按条件归入账号到分组的响应
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AssignByFilterResponse {
+    pub matched_count: usize,
+    pub updated_count: usize,
+    pub group_name: String,
+    pub matched_credential_ids: Vec<u64>,
+}
+
+/// 预览筛选匹配账号请求
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewFilterRequest {
+    pub filter: CredentialFilterCriteria,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_group: Option<String>,
+}
+
+/// 预览条目简要信息
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewCredentialItem {
+    pub id: u64,
+    pub email: Option<String>,
+    pub subscription_title: Option<String>,
+    pub expires_at: Option<String>,
+    pub disabled: bool,
+    pub auth_method: Option<String>,
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub sale_status: String,
+    pub groups: Vec<String>,
+    pub source_channel: Option<String>,
+}
+
+/// 预览筛选响应
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewFilterResponse {
+    pub matched_count: usize,
+    pub total_count: usize,
+    pub credentials: Vec<PreviewCredentialItem>,
 }
 
 // ============ 自定义模型 ============

@@ -446,8 +446,9 @@ export function BatchImportDialog({ open, onOpenChange }: BatchImportDialogProps
               disabled={importing}
               className="flex min-h-[200px] w-full rounded-xl border border-input bg-background/60 px-3.5 py-2.5 text-sm transition-[border-color,background-color,box-shadow] duration-150 ease-apple placeholder:text-muted-foreground/70 hover:border-border focus-visible:outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/30 focus-visible:bg-background disabled:cursor-not-allowed disabled:opacity-50 font-mono"
             />
-            <p className="text-xs text-muted-foreground">
-              💡 "开始导入并验活"会校验余额、失败自动排除；"直接导入"只落库不验活（更快）。两种模式均支持中途"停止"。
+            <p className="text-xs text-muted-foreground flex items-center gap-1">
+              <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+              <span>"开始导入并验活"会校验余额、失败自动排除；"直接导入"只落库不验活（更快）。两种模式均支持中途"停止"。</span>
             </p>
           </div>
 
@@ -474,17 +475,17 @@ export function BatchImportDialog({ open, onOpenChange }: BatchImportDialogProps
 
               {/* 统计 */}
               <div className="flex gap-4 text-sm">
-                <span className="text-green-600 dark:text-green-400">
-                  ✓ 验活成功: {results.filter(r => r.status === 'verified').length}
+                <span className="text-green-600 dark:text-green-400 flex items-center gap-1">
+                  <CheckCircle2 className="h-3.5 w-3.5" /> 验活成功: {results.filter(r => r.status === 'verified').length}
                 </span>
-                <span className="text-sky-600 dark:text-sky-400">
-                  ✓ 已导入: {results.filter(r => r.status === 'imported').length}
+                <span className="text-sky-600 dark:text-sky-400 flex items-center gap-1">
+                  <CheckCircle2 className="h-3.5 w-3.5" /> 已导入: {results.filter(r => r.status === 'imported').length}
                 </span>
-                <span className="text-yellow-600 dark:text-yellow-400">
-                  ⚠ 重复: {results.filter(r => r.status === 'duplicate').length}
+                <span className="text-yellow-600 dark:text-yellow-400 flex items-center gap-1">
+                  <AlertCircle className="h-3.5 w-3.5" /> 重复: {results.filter(r => r.status === 'duplicate').length}
                 </span>
-                <span className="text-red-600 dark:text-red-400">
-                  ✗ 失败: {results.filter(r => r.status === 'failed').length}
+                <span className="text-red-600 dark:text-red-400 flex items-center gap-1">
+                  <XCircle className="h-3.5 w-3.5" /> 失败: {results.filter(r => r.status === 'failed').length}
                 </span>
               </div>
 

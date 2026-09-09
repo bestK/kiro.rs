@@ -5,7 +5,7 @@
 
 use anyhow::bail;
 use chrono::{DateTime, Duration, Utc};
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::sync::{Mutex as TokioMutex, Semaphore};
@@ -1239,6 +1239,8 @@ pub struct MultiTokenManager {
     model_cache_epoch: AtomicU64,
     /// 对自身的弱引用，供内部后台任务异步刷新缓存使用
     weak_self: Mutex<Option<Weak<MultiTokenManager>>>,
+    /// 分组管理器（用于按分组引用与层级解析凭据生效关系）
+    group_manager: RwLock<Option<crate::admin::SharedGroupManager>>,
 }
 
 /// 每个凭据最大 API 调用失败次数
@@ -1298,6 +1300,23 @@ pub struct IdcReloginCredentials {
     pub provider: String,
 }
 
+/// 计算某凭据在当前请求分组下的生效 tier_rank。
+/// 若返回 None，表示该凭据不属于当前请求分组（直接或间接都不属于）。
+fn credential_tier_rank(
+    cred_groups: &[String],
+    group_tiers: Option<&HashMap<String, u32>>,
+) -> Option<u32> {
+    let Some(tiers) = group_tiers else {
+        // 请求没有指定分组：所有凭据都匹配，tier 为 0
+        return Some(0);
+    };
+
+    cred_groups
+        .iter()
+        .filter_map(|g| tiers.get(g).copied())
+        .min()
+}
+
 /// 判断某账号的分组集合是否匹配请求所属分组（严格隔离）
 ///
 /// - `group = None`：Key 未绑定分组（含 master apiKey），匹配所有账号。
@@ -1307,6 +1326,22 @@ fn group_matches(cred_groups: &[String], group: Option<&str>) -> bool {
         None => true,
         Some(g) => cred_groups.iter().any(|cg| cg == g),
     }
+}
+
+fn credential_matches_request_with_tiers(
+    credentials: &KiroCredentials,
+    model: Option<&str>,
+    group_tiers: Option<&HashMap<String, u32>>,
+) -> bool {
+    let is_opus = model
+        .map(|m| m.to_ascii_lowercase().contains("opus"))
+        .unwrap_or(false);
+
+    if is_opus && !credentials.supports_opus() {
+        return false;
+    }
+
+    credential_tier_rank(&credentials.groups, group_tiers).is_some()
 }
 
 fn credential_matches_request(
@@ -1504,6 +1539,7 @@ impl MultiTokenManager {
             model_cache_generations: Mutex::new(HashMap::new()),
             model_cache_epoch: AtomicU64::new(0),
             weak_self: Mutex::new(None),
+            group_manager: RwLock::new(None),
         };
 
         // 单凭据格式自动迁移：升级为数组格式，确保 token rotation 能写盘
@@ -1720,6 +1756,7 @@ impl MultiTokenManager {
 
     fn available_model_credential_ids(&self, group: Option<&str>) -> Vec<u64> {
         let now = Instant::now();
+        let group_tiers = self.resolve_group_tiers(group);
         self.entries
             .lock()
             .iter()
@@ -1729,7 +1766,7 @@ impl MultiTokenManager {
                         .throttled_until
                         .map(|until| until > now)
                         .unwrap_or(false)
-                    && group_matches(&entry.credentials.groups, group)
+                    && credential_tier_rank(&entry.credentials.groups, group_tiers.as_ref()).is_some()
             })
             .map(|entry| entry.id)
             .collect()
@@ -1823,14 +1860,15 @@ impl MultiTokenManager {
         });
     }
 
-    /// 获取指定分组的凭据总数（group=None 时返回全部凭据数）
+    /// 获取指定分组的凭据总数（group=None 时返回全部凭据数，支持分组引用去重）
     ///
     /// 用于按分组计算 failover 重试预算，避免小分组按全局账号数获得过多无效重试。
     pub fn total_count_in_group(&self, group: Option<&str>) -> usize {
+        let group_tiers = self.resolve_group_tiers(group);
         self.entries
             .lock()
             .iter()
-            .filter(|e| group_matches(&e.credentials.groups, group))
+            .filter(|e| credential_tier_rank(&e.credentials.groups, group_tiers.as_ref()).is_some())
             .count()
     }
 
@@ -1851,14 +1889,46 @@ impl MultiTokenManager {
         group: Option<&str>,
         now: Instant,
     ) -> bool {
+        let group_tiers = self.resolve_group_tiers(group);
+        self.entry_available_for_request_with_tiers(entry, model, group_tiers.as_ref(), now)
+    }
+
+    fn entry_available_for_request_with_tiers(
+        &self,
+        entry: &CredentialEntry,
+        model: Option<&str>,
+        group_tiers: Option<&HashMap<String, u32>>,
+        now: Instant,
+    ) -> bool {
         !entry.disabled
             && !entry
                 .throttled_until
                 .map(|until| until > now)
                 .unwrap_or(false)
             && !self.rpm_exceeded(entry, now)
-            && credential_matches_request(&entry.credentials, model, group)
+            && credential_matches_request_with_tiers(&entry.credentials, model, group_tiers)
             && self.cached_model_support(entry.id, model) != CachedModelSupport::Unsupported
+    }
+
+    fn best_available_credential_id(
+        &self,
+        entries: &[CredentialEntry],
+        model: Option<&str>,
+        group: Option<&str>,
+        now: Instant,
+    ) -> Option<u64> {
+        let group_tiers = self.resolve_group_tiers(group);
+        entries
+            .iter()
+            .filter(|entry| {
+                self.entry_available_for_request_with_tiers(entry, model, group_tiers.as_ref(), now)
+            })
+            .min_by_key(|e| (
+                credential_tier_rank(&e.credentials.groups, group_tiers.as_ref()).unwrap_or(0),
+                e.credentials.priority,
+                e.id,
+            ))
+            .map(|e| e.id)
     }
 
     /// 判断凭据在当前 60 秒滑动窗口内是否已达到 RPM 上限。
@@ -1898,6 +1968,7 @@ impl MultiTokenManager {
             return None;
         }
 
+        let group_tiers = self.resolve_group_tiers(group);
         let window = StdDuration::from_secs(RPM_WINDOW_SECS);
         let mut earliest_retry_after = None;
 
@@ -1907,7 +1978,7 @@ impl MultiTokenManager {
                     .throttled_until
                     .map(|until| until > now)
                     .unwrap_or(false)
-                && credential_matches_request(&entry.credentials, model, group)
+                && credential_matches_request_with_tiers(&entry.credentials, model, group_tiers.as_ref())
                 && self.cached_model_support(entry.id, model) != CachedModelSupport::Unsupported
         }) {
             let fresh_count = entry
@@ -1989,15 +2060,16 @@ impl MultiTokenManager {
         group: Option<&str>,
     ) -> bool {
         let now = Instant::now();
+        let group_tiers = self.resolve_group_tiers(group);
         entries
             .iter()
-            .any(|entry| self.entry_available_for_request(entry, model, group, now))
+            .any(|entry| self.entry_available_for_request_with_tiers(entry, model, group_tiers.as_ref(), now))
     }
 
     /// 根据负载均衡模式选择下一个凭据
     ///
-    /// - priority 模式：选择优先级最高（priority 最小）的可用凭据
-    /// - balanced 模式：均衡选择可用凭据
+    /// - priority 模式：选择优先级最高（tier 最小、数字 priority 最小）的可用凭据
+    /// - balanced 模式：按 Tier 分层均衡选择可用凭据（Tier 优先，Tier 内 Least-Used 均摊）
     ///
     /// # 参数
     /// - `model`: 可选的模型名称，用于过滤支持该模型的凭据（如 opus 模型需要付费订阅）
@@ -2008,16 +2080,18 @@ impl MultiTokenManager {
     ) -> Option<(u64, KiroCredentials)> {
         let entries = self.entries.lock();
         let now = Instant::now();
+        let group_tiers = self.resolve_group_tiers(group);
 
-        // 过滤可用凭据
+        // 过滤可用凭据，附带生效 tier
         let available: Vec<_> = entries
             .iter()
             .filter_map(|e| {
-                if !self.entry_available_for_request(e, model, group, now) {
+                if !self.entry_available_for_request_with_tiers(e, model, group_tiers.as_ref(), now) {
                     return None;
                 }
+                let tier = credential_tier_rank(&e.credentials.groups, group_tiers.as_ref()).unwrap_or(0);
                 let model_support = self.cached_model_support(e.id, model);
-                Some((e, model_support))
+                Some((e, tier, model_support))
             })
             .collect();
 
@@ -2030,12 +2104,15 @@ impl MultiTokenManager {
 
         match mode {
             "balanced" => {
-                // Least-Used 策略：优先选择在途并发最少、累计成功次数最少的凭据
-                // 平局时优先选择已确认支持该模型的凭据与高优先级凭据
-                let (entry, support) = available.iter().min_by_key(|(e, support)| {
+                // Tiered Least-Used 策略：
+                // 1. Tier 越小（被引用的优先组，如临期账号）绝对优先于宿主原生账号
+                // 2. 同 Tier 内优先选择在途并发最少、累计成功次数最少的凭据
+                // 3. 平局时优先选择已确认支持该模型的凭据与高优先级凭据
+                let (entry, _, support) = available.iter().min_by_key(|(e, tier, support)| {
                     let in_flight = e.in_flight.load(Ordering::Relaxed);
                     let discovery_rank = usize::from(*support != CachedModelSupport::Confirmed);
                     (
+                        *tier,
                         in_flight,
                         e.success_count,
                         discovery_rank,
@@ -2051,11 +2128,10 @@ impl MultiTokenManager {
                 Some((entry.id, entry.credentials.clone()))
             }
             _ => {
-                // priority 模式（默认）：严格选择数字最小的有效凭据。
-                // 同优先级按 ID 升序固定顺序，保证后端调度与前端预览一致。
-                let (entry, _) = available
+                // priority 模式（默认）：严格按 (tier, priority, id) 升序固定顺序选择。
+                let (entry, _, _) = available
                     .iter()
-                    .min_by_key(|(e, _)| (e.credentials.priority, e.id))?;
+                    .min_by_key(|(e, tier, _)| (*tier, e.credentials.priority, e.id))?;
                 Some((entry.id, entry.credentials.clone()))
             }
         }
@@ -2774,19 +2850,11 @@ impl MultiTokenManager {
                 disabled_now = true;
                 tracing::error!("凭据 #{} 已连续失败 {} 次，已被禁用", id, failure_count);
 
-                if let Some(next) = entries
-                    .iter()
-                    .filter(|entry| {
-                        self.entry_available_for_request(entry, model, group, Instant::now())
-                    })
-                    .min_by_key(|e| (e.credentials.priority, e.id))
+                if let Some(next_id) =
+                    self.best_available_credential_id(&entries, model, group, Instant::now())
                 {
-                    *current_id = next.id;
-                    tracing::info!(
-                        "已切换到凭据 #{}（优先级 {}）",
-                        next.id,
-                        next.credentials.priority
-                    );
+                    *current_id = next_id;
+                    tracing::info!("已切换到凭据 #{}", next_id);
                 } else {
                     tracing::error!("所有凭据均已禁用！");
                 }
@@ -2849,19 +2917,11 @@ impl MultiTokenManager {
                 id
             );
 
-            if let Some(next) = entries
-                .iter()
-                .filter(|entry| {
-                    self.entry_available_for_request(entry, model, group, Instant::now())
-                })
-                .min_by_key(|e| (e.credentials.priority, e.id))
+            if let Some(next_id) =
+                self.best_available_credential_id(&entries, model, group, Instant::now())
             {
-                *current_id = next.id;
-                tracing::info!(
-                    "已切换到凭据 #{}（优先级 {}）",
-                    next.id,
-                    next.credentials.priority
-                );
+                *current_id = next_id;
+                tracing::info!("已切换到凭据 #{}", next_id);
                 true
             } else {
                 tracing::error!("所有凭据均已禁用！");
@@ -3017,19 +3077,11 @@ impl MultiTokenManager {
                 id
             );
 
-            if let Some(next) = entries
-                .iter()
-                .filter(|entry| {
-                    self.entry_available_for_request(entry, model, group, Instant::now())
-                })
-                .min_by_key(|e| (e.credentials.priority, e.id))
+            if let Some(next_id) =
+                self.best_available_credential_id(&entries, model, group, Instant::now())
             {
-                *current_id = next.id;
-                tracing::info!(
-                    "已切换到凭据 #{}（优先级 {}）",
-                    next.id,
-                    next.credentials.priority
-                );
+                *current_id = next_id;
+                tracing::info!("已切换到凭据 #{}", next_id);
                 true
             } else {
                 tracing::error!("所有凭据均已禁用！");
@@ -4248,6 +4300,268 @@ impl MultiTokenManager {
         Ok(affected)
     }
 
+    /// 检查单个凭据是否满足指定的过滤条件
+    pub fn credential_matches_filter(
+        cred: &KiroCredentials,
+        filter: &crate::admin::types::CredentialFilterCriteria,
+        now: DateTime<Utc>,
+        target_group: Option<&str>,
+    ) -> bool {
+        // 1. 到期时间 / 临期范围
+        if let Some(ref window) = filter.expiry_window {
+            let w = window.trim().to_lowercase();
+            if w != "all" && !w.is_empty() {
+                let Some(ref exp_str) = cred.expires_at else {
+                    return false;
+                };
+                let Ok(exp) = DateTime::parse_from_rfc3339(exp_str) else {
+                    return false;
+                };
+                let exp_utc = exp.with_timezone(&Utc);
+                if w == "expired" {
+                    if exp_utc > now {
+                        return false;
+                    }
+                } else if let Ok(days) = w.trim_end_matches('d').parse::<i64>() {
+                    let threshold = now + Duration::days(days);
+                    if exp_utc > threshold {
+                        return false;
+                    }
+                } else if let Ok(hours) = w.trim_end_matches('h').parse::<i64>() {
+                    let threshold = now + Duration::hours(hours);
+                    if exp_utc > threshold {
+                        return false;
+                    }
+                }
+            }
+        }
+
+        // 2. 订阅类型
+        if let Some(ref titles) = filter.subscription_titles {
+            if !titles.is_empty() {
+                let sub = cred.subscription_title.as_deref().unwrap_or("").trim().to_lowercase();
+                let any_match = titles.iter().any(|t| {
+                    let target = t.trim().to_lowercase();
+                    if target.is_empty() || target == "unknown" || target == "none" {
+                        sub.is_empty()
+                    } else {
+                        sub == target || sub.contains(&target)
+                    }
+                });
+                if !any_match {
+                    return false;
+                }
+            }
+        }
+
+        // 3. 启用/禁用状态
+        if let Some(ref s) = filter.status {
+            match s.trim().to_lowercase().as_str() {
+                "active" => {
+                    if cred.disabled {
+                        return false;
+                    }
+                }
+                "disabled" => {
+                    if !cred.disabled {
+                        return false;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // 4. 账号类型 (normal / boom)
+        if let Some(ref types) = filter.credential_types {
+            if !types.is_empty() {
+                let kind_str = match cred.metadata.kind {
+                    crate::kiro::model::credentials::CredentialType::Normal => "normal",
+                    crate::kiro::model::credentials::CredentialType::Boom => "boom",
+                };
+                if !types.iter().any(|t| t.trim().eq_ignore_ascii_case(kind_str)) {
+                    return false;
+                }
+            }
+        }
+
+        // 5. 在售状态 (not_for_sale / for_sale / sold)
+        if let Some(ref statuses) = filter.sale_statuses {
+            if !statuses.is_empty() {
+                let status_str = match cred.metadata.sale_status {
+                    crate::kiro::model::credentials::CredentialSaleStatus::NotForSale => "not_for_sale",
+                    crate::kiro::model::credentials::CredentialSaleStatus::ForSale => "for_sale",
+                    crate::kiro::model::credentials::CredentialSaleStatus::Sold => "sold",
+                };
+                if !statuses.iter().any(|s| s.trim().eq_ignore_ascii_case(status_str)) {
+                    return false;
+                }
+            }
+        }
+
+        // 6. 认证方式 (social / idc / external_idp / api_key)
+        if let Some(ref methods) = filter.auth_methods {
+            if !methods.is_empty() {
+                let method = if cred.kiro_api_key.is_some() {
+                    "api_key"
+                } else {
+                    cred.auth_method.as_deref().unwrap_or("social")
+                };
+                if !methods.iter().any(|m| m.trim().eq_ignore_ascii_case(method)) {
+                    return false;
+                }
+            }
+        }
+
+        // 7. 邮箱模糊匹配
+        if let Some(ref q) = filter.email_contains {
+            let trimmed = q.trim().to_lowercase();
+            if !trimmed.is_empty() {
+                let Some(ref email) = cred.email else {
+                    return false;
+                };
+                if !email.to_lowercase().contains(&trimmed) {
+                    return false;
+                }
+            }
+        }
+
+        // 8. 来源渠道模糊匹配
+        if let Some(ref q) = filter.source_channel_contains {
+            let trimmed = q.trim().to_lowercase();
+            if !trimmed.is_empty() {
+                let Some(ref channel) = cred.source_channel else {
+                    return false;
+                };
+                if !channel.to_lowercase().contains(&trimmed) {
+                    return false;
+                }
+            }
+        }
+
+        // 9. 现有分组归属状态
+        if let Some(ref gp) = filter.group_presence {
+            match gp.trim().to_lowercase().as_str() {
+                "unassigned" => {
+                    if !cred.groups.is_empty() {
+                        return false;
+                    }
+                }
+                "has_group" => {
+                    if cred.groups.is_empty() {
+                        return false;
+                    }
+                }
+                "not_in_group" => {
+                    if let Some(tg) = target_group {
+                        if cred.groups.iter().any(|g| g == tg) {
+                            return false;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        true
+    }
+
+    /// 预览条件筛选结果（统计匹配数量及匹配凭据列表）
+    pub fn preview_credentials_filter(
+        &self,
+        filter: &crate::admin::types::CredentialFilterCriteria,
+        target_group: Option<&str>,
+    ) -> crate::admin::types::PreviewFilterResponse {
+        let now = Utc::now();
+        let entries = self.entries.lock();
+        let total_count = entries.len();
+        let mut matched_count = 0;
+        let mut credentials = Vec::new();
+
+        for entry in entries.iter() {
+            if Self::credential_matches_filter(&entry.credentials, filter, now, target_group) {
+                matched_count += 1;
+                credentials.push(crate::admin::types::PreviewCredentialItem {
+                    id: entry.id,
+                    email: entry.credentials.email.clone(),
+                    subscription_title: entry.credentials.subscription_title.clone(),
+                    expires_at: entry.credentials.expires_at.clone(),
+                    disabled: entry.credentials.disabled,
+                    auth_method: if entry.credentials.kiro_api_key.is_some() {
+                        Some("api_key".to_string())
+                    } else {
+                        entry.credentials.auth_method.clone()
+                    },
+                    kind: match entry.credentials.metadata.kind {
+                        crate::kiro::model::credentials::CredentialType::Normal => "normal".to_string(),
+                        crate::kiro::model::credentials::CredentialType::Boom => "boom".to_string(),
+                    },
+                    sale_status: match entry.credentials.metadata.sale_status {
+                        crate::kiro::model::credentials::CredentialSaleStatus::NotForSale => "not_for_sale".to_string(),
+                        crate::kiro::model::credentials::CredentialSaleStatus::ForSale => "for_sale".to_string(),
+                        crate::kiro::model::credentials::CredentialSaleStatus::Sold => "sold".to_string(),
+                    },
+                    groups: entry.credentials.groups.clone(),
+                    source_channel: entry.credentials.source_channel.clone(),
+                });
+            }
+        }
+
+        crate::admin::types::PreviewFilterResponse {
+            matched_count,
+            total_count,
+            credentials,
+        }
+    }
+
+    /// 按字段条件批量归入凭据到目标分组（支持追加或覆盖模式）
+    pub fn assign_credentials_by_filter(
+        &self,
+        group_name: &str,
+        filter: &crate::admin::types::CredentialFilterCriteria,
+        mode: crate::admin::types::AssignMode,
+    ) -> anyhow::Result<crate::admin::types::AssignByFilterResponse> {
+        let group_name = group_name.trim();
+        if group_name.is_empty() {
+            anyhow::bail!("分组名不能为空");
+        }
+        let now = Utc::now();
+        let mut matched_count = 0usize;
+        let mut updated_count = 0usize;
+        let mut matched_ids = Vec::new();
+
+        {
+            let mut entries = self.entries.lock();
+            for entry in entries.iter_mut() {
+                let matches = Self::credential_matches_filter(&entry.credentials, filter, now, Some(group_name));
+                if matches {
+                    matched_count += 1;
+                    matched_ids.push(entry.id);
+                    if !entry.credentials.groups.iter().any(|g| g == group_name) {
+                        entry.credentials.groups.push(group_name.to_string());
+                        updated_count += 1;
+                    }
+                } else if mode == crate::admin::types::AssignMode::Replace {
+                    let before_len = entry.credentials.groups.len();
+                    entry.credentials.groups.retain(|g| g != group_name);
+                    if entry.credentials.groups.len() < before_len {
+                        updated_count += 1;
+                    }
+                }
+            }
+        }
+
+        if updated_count > 0 {
+            self.persist_credentials()?;
+        }
+
+        Ok(crate::admin::types::AssignByFilterResponse {
+            matched_count,
+            updated_count,
+            group_name: group_name.to_string(),
+            matched_credential_ids: matched_ids,
+        })
+    }
+
     /// 删除凭据（Admin API）
     ///
     /// # 前置条件
@@ -4466,6 +4780,30 @@ impl MultiTokenManager {
 
         tracing::info!("凭据 #{} Token 已强制刷新", id);
         Ok(())
+    }
+
+    /// 设置账号分组管理器引用（用于请求调度时的跨分组引用与 Tier 等级解析）
+    pub fn set_group_manager(&self, group_manager: crate::admin::SharedGroupManager) {
+        let mut gm = self.group_manager.write();
+        *gm = Some(group_manager);
+    }
+
+    /// 获取指定请求分组的生效分组集合与其 Tier 等级
+    pub fn resolve_group_tiers(
+        &self,
+        group: Option<&str>,
+    ) -> Option<HashMap<String, u32>> {
+        let g = group?;
+        if let Some(mgr) = self.group_manager.read().as_ref() {
+            Some(mgr.resolve_group_tiers(g))
+        } else {
+            Some(HashMap::from([(g.to_string(), 1000)]))
+        }
+    }
+
+    /// 查询指定分组的有效凭据数量（包含直接归属和启用引用的子分组凭据去重计数）
+    pub fn count_effective_credentials_for_group(&self, group: &str) -> usize {
+        self.total_count_in_group(Some(group))
     }
 
     /// 获取负载均衡模式（Admin API）
@@ -7662,5 +8000,196 @@ mod tests {
             Some(2),
             "balanced 模式下新导入或未预热凭据应参与调度，不应被饿死"
         );
+    }
+
+    #[test]
+    fn test_group_references_tier_scheduling() {
+        let mut config = Config::default();
+        config.load_balancing_mode = "balanced".to_string();
+
+        let mut host_cred = KiroCredentials::default();
+        host_cred.id = Some(1);
+        host_cred.access_token = Some("token-host".to_string());
+        host_cred.expires_at = Some((Utc::now() + Duration::hours(1)).to_rfc3339());
+        host_cred.groups = vec!["main".to_string()];
+        host_cred.priority = 0; // 原生账号自身 priority 为 0
+
+        let mut expiring_cred = KiroCredentials::default();
+        expiring_cred.id = Some(2);
+        expiring_cred.access_token = Some("token-expiring".to_string());
+        expiring_cred.expires_at = Some((Utc::now() + Duration::hours(1)).to_rfc3339());
+        expiring_cred.groups = vec!["expiring".to_string()];
+        expiring_cred.priority = 10; // 临期账号自身 priority 即使较大（10）
+
+        let mut other_cred = KiroCredentials::default();
+        other_cred.id = Some(3);
+        other_cred.access_token = Some("token-other".to_string());
+        other_cred.expires_at = Some((Utc::now() + Duration::hours(1)).to_rfc3339());
+        other_cred.groups = vec!["other".to_string()];
+
+        let manager = MultiTokenManager::new(
+            config,
+            vec![host_cred, expiring_cred, other_cred],
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+
+        // 模拟临期凭据 #2 此前已经成功调用了 500 次
+        for _ in 0..500 {
+            manager.report_success(2);
+        }
+
+        // 配置分组注册表：main 引用 expiring 为 prioritized（优先消耗）
+        let group_mgr = Arc::new(crate::admin::GroupManager::new());
+        group_mgr.create("expiring".into(), None).unwrap();
+        group_mgr.create("main".into(), None).unwrap();
+        group_mgr
+            .update_references(
+                "main",
+                vec![crate::admin::groups::GroupReference {
+                    group: "expiring".into(),
+                    tier: crate::admin::groups::ReferenceTier::Prioritized,
+                    enabled: true,
+                }],
+            )
+            .unwrap();
+
+        manager.set_group_manager(group_mgr);
+
+        // 验证分组凭据总数计算（main 包含自身 + 引用，去重后共 2 个）
+        assert_eq!(manager.total_count_in_group(Some("main")), 2);
+        assert_eq!(manager.total_count_in_group(Some("expiring")), 1);
+
+        // 1. Balanced 模式：虽然 #2 的 success_count 是 500 而 #1 是 0，
+        // 但由于 #2 属于被引用的优先层（Tier 0），必须绝对优先调度 #2
+        let pick = manager.select_next_credential(None, Some("main"));
+        assert_eq!(
+            pick.map(|(id, _)| id),
+            Some(2),
+            "被引用的临期账号组应严格优先于宿主原生账号"
+        );
+
+        // 2. 模拟临期账号用尽被禁用：流量应自动平滑回退到宿主原生账号 #1
+        manager.set_disabled(2, true).unwrap();
+        let fallback_pick = manager.select_next_credential(None, Some("main"));
+        assert_eq!(
+            fallback_pick.map(|(id, _)| id),
+            Some(1),
+            "临期账号不可用时应自动平滑回退到宿主原生账号"
+        );
+
+        // 3. 恢复临期账号并切换到 Priority 模式
+        manager.set_disabled(2, false).unwrap();
+        manager
+            .set_load_balancing_mode("priority".to_string())
+            .unwrap();
+        let priority_pick = manager.select_next_credential(None, Some("main"));
+        assert_eq!(
+            priority_pick.map(|(id, _)| id),
+            Some(2),
+            "Priority 模式下被引用的优先组也应优先于宿主原生账号"
+        );
+    }
+
+    #[test]
+    fn test_assign_credentials_by_filter() {
+        let config = Config::default();
+
+        // 凭据1: 临期账号 (2天后到期), KIRO PRO, active, email: expiring@test.com
+        let mut cred1 = KiroCredentials::default();
+        cred1.id = Some(1);
+        cred1.email = Some("expiring@test.com".to_string());
+        cred1.subscription_title = Some("KIRO PRO".to_string());
+        cred1.expires_at = Some((Utc::now() + Duration::days(2)).to_rfc3339());
+        cred1.disabled = false;
+        cred1.groups = vec!["old-group".to_string()];
+
+        // 凭据2: 远期账号 (30天后到期), KIRO FREE, active, email: normal@test.com
+        let mut cred2 = KiroCredentials::default();
+        cred2.id = Some(2);
+        cred2.email = Some("normal@test.com".to_string());
+        cred2.subscription_title = Some("KIRO FREE".to_string());
+        cred2.expires_at = Some((Utc::now() + Duration::days(30)).to_rfc3339());
+        cred2.disabled = false;
+
+        // 凭据3: 已过期账号 (已过期1天), KIRO PRO, disabled, email: dead@other.com
+        let mut cred3 = KiroCredentials::default();
+        cred3.id = Some(3);
+        cred3.email = Some("dead@other.com".to_string());
+        cred3.subscription_title = Some("KIRO PRO".to_string());
+        cred3.expires_at = Some((Utc::now() - Duration::days(1)).to_rfc3339());
+        cred3.disabled = true;
+
+        let manager = MultiTokenManager::new(
+            config,
+            vec![cred1, cred2, cred3],
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+
+        // 1. 筛选 3 天内到期的活跃账号
+        let filter = crate::admin::types::CredentialFilterCriteria {
+            expiry_window: Some("3d".to_string()),
+            status: Some("active".to_string()),
+            ..Default::default()
+        };
+
+        // 预览测试：只有 cred1 匹配（cred3 虽然过期但 disabled，cred2 未临期）
+        let preview = manager.preview_credentials_filter(&filter, Some("expiring-group"));
+        assert_eq!(preview.matched_count, 1);
+        assert_eq!(preview.credentials[0].id, 1);
+
+        // 执行追加归入到 "expiring-group"
+        let assign_resp = manager
+            .assign_credentials_by_filter(
+                "expiring-group",
+                &filter,
+                crate::admin::types::AssignMode::Append,
+            )
+            .unwrap();
+        assert_eq!(assign_resp.matched_count, 1);
+        assert_eq!(assign_resp.updated_count, 1);
+
+        // 验证 cred1 现在同时有 "old-group" 和 "expiring-group"
+        let entries = manager.entries.lock();
+        let c1 = entries.iter().find(|e| e.id == 1).unwrap();
+        assert!(c1.credentials.groups.contains(&"old-group".to_string()));
+        assert!(c1.credentials.groups.contains(&"expiring-group".to_string()));
+        drop(entries);
+
+        // 2. 筛选邮箱包含 "other.com" 的账号
+        let email_filter = crate::admin::types::CredentialFilterCriteria {
+            email_contains: Some("other.com".to_string()),
+            ..Default::default()
+        };
+        let preview_email = manager.preview_credentials_filter(&email_filter, None);
+        assert_eq!(preview_email.matched_count, 1);
+        assert_eq!(preview_email.credentials[0].id, 3);
+
+        // 3. 测试覆盖模式 (Replace) 归入 "expiring-group"
+        // 筛选 KIRO FREE 账号（只有 cred2）
+        let free_filter = crate::admin::types::CredentialFilterCriteria {
+            subscription_titles: Some(vec!["KIRO FREE".to_string()]),
+            ..Default::default()
+        };
+        manager
+            .assign_credentials_by_filter(
+                "expiring-group",
+                &free_filter,
+                crate::admin::types::AssignMode::Replace,
+            )
+            .unwrap();
+
+        let entries = manager.entries.lock();
+        let c1 = entries.iter().find(|e| e.id == 1).unwrap();
+        let c2 = entries.iter().find(|e| e.id == 2).unwrap();
+        // c1 不符合条件，应被移出 "expiring-group"
+        assert!(!c1.credentials.groups.contains(&"expiring-group".to_string()));
+        // c2 符合条件，应被加入 "expiring-group"
+        assert!(c2.credentials.groups.contains(&"expiring-group".to_string()));
     }
 }

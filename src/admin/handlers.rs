@@ -1870,17 +1870,26 @@ pub async fn trace_failure_stats(State(state): State<AdminState>) -> impl IntoRe
 // ============ 账号分组（独立实体）============
 
 fn group_to_item(g: &super::groups::Group, state: &AdminState) -> super::types::GroupItem {
+    let credential_count = state
+        .service
+        .token_manager()
+        .count_credentials_with_group(&g.name);
+    let effective_credential_count = state
+        .service
+        .token_manager()
+        .count_effective_credentials_for_group(&g.name);
+    let referenced_by = state.groups.referenced_by(&g.name);
     super::types::GroupItem {
         name: g.name.clone(),
         description: g.description.clone(),
         created_at: g.created_at.clone(),
-        credential_count: state
-            .service
-            .token_manager()
-            .count_credentials_with_group(&g.name),
+        credential_count,
+        effective_credential_count,
         client_key_count: state.client_keys.count_with_group(&g.name),
         token_by_credit_enabled: g.token_by_credit_enabled,
         credit_price: g.credit_price,
+        references: g.references.clone(),
+        referenced_by,
     }
 }
 
@@ -1940,13 +1949,25 @@ pub async fn create_group(
     State(state): State<AdminState>,
     Json(payload): Json<super::types::CreateGroupRequest>,
 ) -> impl IntoResponse {
-    match state.groups.create_with_pricing(
+    let auto_assign_filter = payload.auto_assign_filter.clone();
+    let group_name = payload.name.clone();
+    match state.groups.create_with_options(
         payload.name,
         payload.description,
         payload.token_by_credit_enabled,
         payload.credit_price,
+        payload.references.unwrap_or_default(),
     ) {
-        Ok(g) => Json(group_to_item(&g, &state)).into_response(),
+        Ok(g) => {
+            if let Some(filter) = auto_assign_filter {
+                let _ = state.service.token_manager().assign_credentials_by_filter(
+                    &group_name,
+                    &filter,
+                    super::types::AssignMode::Append,
+                );
+            }
+            Json(group_to_item(&g, &state)).into_response()
+        }
         Err(e) => {
             let msg = e.to_string();
             // "已存在" → 409；其他校验失败 → 400
@@ -2067,6 +2088,19 @@ pub async fn update_group(
         }
     }
 
+    // 4. 改引用分组配置
+    if let Some(refs) = payload.references {
+        if let Err(e) = state.groups.update_references(&current_name, refs) {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(super::types::AdminErrorResponse::invalid_request(
+                    e.to_string(),
+                )),
+            )
+                .into_response();
+        }
+    }
+
     let group = match state.groups.get(&current_name) {
         Some(g) => g,
         None => {
@@ -2106,13 +2140,24 @@ pub async fn delete_group(
         .token_manager()
         .count_credentials_with_group(&name);
     let key_count = state.client_keys.count_with_group(&name);
+    let ref_by = state.groups.referenced_by(&name);
 
-    if (cred_count > 0 || key_count > 0) && !query.force {
+    if (cred_count > 0 || key_count > 0 || !ref_by.is_empty()) && !query.force {
+        let mut reasons = Vec::new();
+        if cred_count > 0 {
+            reasons.push(format!("凭据 {}", cred_count));
+        }
+        if key_count > 0 {
+            reasons.push(format!("客户端 Key {}", key_count));
+        }
+        if !ref_by.is_empty() {
+            reasons.push(format!("被分组引用 [{}]", ref_by.join(", ")));
+        }
         return (
             StatusCode::CONFLICT,
             Json(super::types::AdminErrorResponse::invalid_request(format!(
-                "分组仍被引用（凭据 {} / 客户端 Key {}），传 ?force=true 级联清理",
-                cred_count, key_count
+                "分组仍被引用（{}），传 ?force=true 级联清理",
+                reasons.join(" / ")
             ))),
         )
             .into_response();
@@ -2139,3 +2184,49 @@ pub async fn delete_group(
     )))
     .into_response()
 }
+
+/// POST /api/admin/groups/:name/assign-by-filter
+/// 按字段条件批量筛选凭据并归入目标分组（支持追加或覆盖）
+pub async fn assign_group_credentials_by_filter(
+    State(state): State<AdminState>,
+    Path(name): Path<String>,
+    Json(payload): Json<super::types::AssignByFilterRequest>,
+) -> impl IntoResponse {
+    if state.groups.get(&name).is_none() {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(super::types::AdminErrorResponse::not_found(format!(
+                "分组 '{}' 不存在",
+                name
+            ))),
+        )
+            .into_response();
+    }
+
+    match state
+        .service
+        .token_manager()
+        .assign_credentials_by_filter(&name, &payload.filter, payload.mode)
+    {
+        Ok(resp) => Json(resp).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(super::types::AdminErrorResponse::internal_error(e.to_string())),
+        )
+            .into_response(),
+    }
+}
+
+/// POST /api/admin/credentials/preview-filter
+/// 预览根据条件匹配的凭据
+pub async fn preview_credentials_filter(
+    State(state): State<AdminState>,
+    Json(payload): Json<super::types::PreviewFilterRequest>,
+) -> impl IntoResponse {
+    let resp = state
+        .service
+        .token_manager()
+        .preview_credentials_filter(&payload.filter, payload.target_group.as_deref());
+    Json(resp).into_response()
+}
+

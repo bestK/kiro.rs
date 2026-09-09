@@ -762,14 +762,28 @@ export interface CustomModelItem {
 
 // ============ 账号分组（独立实体）============
 
+export type ReferenceTier = 'prioritized' | 'normal' | 'fallback'
+
+export interface GroupReference {
+  group: string
+  tier: ReferenceTier
+  enabled: boolean
+}
+
 export interface GroupItem {
   name: string
   description?: string
   createdAt: string
-  /** 引用计数：有多少个凭据带这个分组 */
+  /** 引用计数：有多少个凭据直接属于这个分组 */
   credentialCount: number
   /** 引用计数：有多少把客户端 Key 绑定这个分组 */
   clientKeyCount: number
+  /** 当前分组引用的其他分组列表（带优先级梯度） */
+  references?: GroupReference[]
+  /** 哪些分组引用了当前分组 */
+  referencedBy?: string[]
+  /** 算上引用的有效凭据总数（去重后实际可用） */
+  effectiveCredentialCount?: number
   tokenByCreditEnabled?: boolean | null
   creditPrice?: number | null
 }
@@ -793,6 +807,8 @@ export interface CreateGroupRequest {
   description?: string
   tokenByCreditEnabled?: boolean
   creditPrice?: number
+  references?: GroupReference[]
+  autoAssignFilter?: CredentialFilterCriteria
 }
 
 export interface UpdateGroupRequest {
@@ -804,6 +820,68 @@ export interface UpdateGroupRequest {
   resetTokenByCredit?: boolean
   creditPrice?: number
   resetCreditPrice?: boolean
+  references?: GroupReference[]
+}
+
+// ============ 凭据字段条件筛选与自动归组 ============
+
+export interface CredentialFilterCriteria {
+  /** 临期时间范围: 'all' | 'expired' | '1d' | '3d' | '7d' | '14d' | '30d' | string */
+  expiryWindow?: string
+  /** 订阅类型筛选 */
+  subscriptionTitles?: string[]
+  /** 账号状态: 'all' | 'active' | 'disabled' */
+  status?: string
+  /** 账号类型: 'normal' | 'boom' */
+  credentialTypes?: string[]
+  /** 在售状态: 'not_for_sale' | 'for_sale' | 'sold' */
+  saleStatuses?: string[]
+  /** 认证方式: 'social' | 'idc' | 'external_idp' | 'api_key' */
+  authMethods?: string[]
+  /** 邮箱包含文本 (忽略大小写) */
+  emailContains?: string
+  /** 来源渠道包含文本 (忽略大小写) */
+  sourceChannelContains?: string
+  /** 现有分组状态: 'all' | 'unassigned' | 'has_group' | 'not_in_group' */
+  groupPresence?: string
+}
+
+export type AssignMode = 'append' | 'replace'
+
+export interface AssignByFilterRequest {
+  filter: CredentialFilterCriteria
+  mode?: AssignMode
+}
+
+export interface AssignByFilterResponse {
+  matchedCount: number
+  updatedCount: number
+  groupName: string
+  matchedCredentialIds: number[]
+}
+
+export interface PreviewFilterRequest {
+  filter: CredentialFilterCriteria
+  targetGroup?: string
+}
+
+export interface PreviewCredentialItem {
+  id: number
+  email?: string
+  subscriptionTitle?: string
+  expiresAt?: string | null
+  disabled: boolean
+  authMethod?: string
+  type: string
+  saleStatus: string
+  groups: string[]
+  sourceChannel?: string
+}
+
+export interface PreviewFilterResponse {
+  matchedCount: number
+  totalCount: number
+  credentials: PreviewCredentialItem[]
 }
 
 // ============ 按积分返回 Token 全局配置 ============

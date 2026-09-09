@@ -15,6 +15,42 @@ use chrono::Utc;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 
+/// 引用分组的优先级策略（层级）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ReferenceTier {
+    /// 优先消耗（该分组下所有账号严格优先于宿主账号，默认行为）
+    Prioritized,
+    /// 平级合并（与宿主账号同级）
+    Normal,
+    /// 备用兜底（宿主账号全部不可用时才使用）
+    Fallback,
+}
+
+impl Default for ReferenceTier {
+    fn default() -> Self {
+        Self::Prioritized
+    }
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// 分组引用项
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GroupReference {
+    /// 被引用的目标分组名
+    pub group: String,
+    /// 优先级层级：prioritized (默认) / normal / fallback
+    #[serde(default)]
+    pub tier: ReferenceTier,
+    /// 是否启用该引用（默认 true）
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
 /// 单个分组（持久化实体）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -32,6 +68,9 @@ pub struct Group {
     /// 该分组 1 积分对应的金额（None 表示继承全局配置）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub credit_price: Option<f64>,
+    /// 引用的其他分组列表
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub references: Vec<GroupReference>,
 }
 
 /// 分组管理器（线程安全 + 自动持久化）
@@ -126,13 +165,14 @@ impl GroupManager {
             .collect()
     }
 
-    /// 创建分组（支持指定积分配置）。重名直接报错，不会静默覆盖（避免误创建丢备注）
-    pub fn create_with_pricing(
+    /// 创建分组（支持指定积分配置与引用配置）。重名直接报错，不会静默覆盖（避免误创建丢备注）
+    pub fn create_with_options(
         &self,
         name: String,
         description: Option<String>,
         token_by_credit_enabled: Option<bool>,
         credit_price: Option<f64>,
+        references: Vec<GroupReference>,
     ) -> anyhow::Result<Group> {
         let trimmed = name.trim();
         if trimmed.is_empty() {
@@ -145,16 +185,30 @@ impl GroupManager {
         if inner.entries.contains_key(trimmed) {
             anyhow::bail!("分组已存在: {}", trimmed);
         }
+        Self::validate_references_locked(trimmed, &references, &inner)?;
+
         let group = Group {
             name: trimmed.to_string(),
             description: description.map(|d| d.trim().to_string()).filter(|d| !d.is_empty()),
             created_at: Utc::now().to_rfc3339(),
             token_by_credit_enabled,
             credit_price,
+            references,
         };
         inner.entries.insert(group.name.clone(), group.clone());
         self.save_locked(&inner);
         Ok(group)
+    }
+
+    /// 创建分组（支持指定积分配置）。重名直接报错，不会静默覆盖（避免误创建丢备注）
+    pub fn create_with_pricing(
+        &self,
+        name: String,
+        description: Option<String>,
+        token_by_credit_enabled: Option<bool>,
+        credit_price: Option<f64>,
+    ) -> anyhow::Result<Group> {
+        self.create_with_options(name, description, token_by_credit_enabled, credit_price, Vec::new())
     }
 
     /// 创建分组。重名直接报错，不会静默覆盖（避免误创建丢备注）
@@ -190,6 +244,142 @@ impl GroupManager {
         let cloned = entry.clone();
         self.save_locked(&inner);
         Ok(cloned)
+    }
+
+    /// 更新分组的引用列表（带防环与存在性校验）
+    pub fn update_references(
+        &self,
+        name: &str,
+        references: Vec<GroupReference>,
+    ) -> anyhow::Result<Group> {
+        let mut inner = self.inner.write();
+        if !inner.entries.contains_key(name) {
+            anyhow::bail!("分组不存在: {}", name);
+        }
+        Self::validate_references_locked(name, &references, &inner)?;
+
+        let entry = inner.entries.get_mut(name).unwrap();
+        entry.references = references;
+        let cloned = entry.clone();
+        self.save_locked(&inner);
+        Ok(cloned)
+    }
+
+    fn validate_references_locked(
+        source_name: &str,
+        references: &[GroupReference],
+        inner: &Inner,
+    ) -> anyhow::Result<()> {
+        let mut seen = std::collections::HashSet::new();
+        for r in references {
+            let target = r.group.trim();
+            if target.is_empty() {
+                anyhow::bail!("被引用分组名不能为空");
+            }
+            if target == source_name {
+                anyhow::bail!("分组不能引用自身: {}", source_name);
+            }
+            if !inner.entries.contains_key(target) {
+                anyhow::bail!("被引用的分组不存在: {}", target);
+            }
+            if !seen.insert(target.to_string()) {
+                anyhow::bail!("引用列表中存在重复的分组: {}", target);
+            }
+        }
+
+        // 防环检测 (Cycle detection via BFS)
+        let mut queue = std::collections::VecDeque::new();
+        let mut visited = std::collections::HashSet::new();
+        for r in references {
+            if r.enabled {
+                queue.push_back((r.group.clone(), vec![source_name.to_string(), r.group.clone()]));
+                visited.insert(r.group.clone());
+            }
+        }
+        while let Some((curr, path)) = queue.pop_front() {
+            if curr == source_name {
+                anyhow::bail!("检测到循环引用: {}", path.join(" -> "));
+            }
+            if path.len() > 10 {
+                anyhow::bail!("引用层级过深（超过 10 层）: {}", path.join(" -> "));
+            }
+            if let Some(target_group) = inner.entries.get(&curr) {
+                for next_ref in &target_group.references {
+                    if next_ref.enabled {
+                        let mut next_path = path.clone();
+                        next_path.push(next_ref.group.clone());
+                        if next_ref.group == source_name {
+                            anyhow::bail!("检测到循环引用: {}", next_path.join(" -> "));
+                        }
+                        if visited.insert(next_ref.group.clone()) {
+                            queue.push_back((next_ref.group.clone(), next_path));
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// 解析指定目标分组及其所有生效子分组的 tier_rank 映射。
+    /// 返回：HashMap<group_name, tier_rank>
+    /// 规则：
+    /// - 数字越小优先级越高。
+    /// - Prioritized 组：0, 1, 2...（按配置顺序，全部严格高于宿主组）
+    /// - 宿主组自身与 Normal 组：1000
+    /// - Fallback 组：2000, 2001...（低于宿主组）
+    pub fn resolve_group_tiers(&self, target_group: &str) -> std::collections::HashMap<String, u32> {
+        let inner = self.inner.read();
+        let mut result = std::collections::HashMap::new();
+
+        // 宿主组自身默认为 1000
+        result.insert(target_group.to_string(), 1000);
+
+        let Some(target) = inner.entries.get(target_group) else {
+            return result;
+        };
+
+        let mut prioritized_idx = 0u32;
+        let mut fallback_idx = 2000u32;
+
+        for r in &target.references {
+            if !r.enabled {
+                continue;
+            }
+            let rank = match r.tier {
+                ReferenceTier::Prioritized => {
+                    let rank = prioritized_idx;
+                    prioritized_idx += 1;
+                    rank
+                }
+                ReferenceTier::Normal => 1000,
+                ReferenceTier::Fallback => {
+                    let rank = fallback_idx;
+                    fallback_idx += 1;
+                    rank
+                }
+            };
+            result
+                .entry(r.group.clone())
+                .and_modify(|existing| *existing = (*existing).min(rank))
+                .or_insert(rank);
+        }
+
+        result
+    }
+
+    /// 查询有哪些分组引用了指定分组
+    pub fn referenced_by(&self, name: &str) -> Vec<String> {
+        let inner = self.inner.read();
+        let mut referrers = Vec::new();
+        for g in inner.entries.values() {
+            if g.references.iter().any(|r| r.group == name) {
+                referrers.push(g.name.clone());
+            }
+        }
+        referrers.sort();
+        referrers
     }
 
     /// 更新备注（不改名字）
@@ -233,6 +423,16 @@ impl GroupManager {
         let mut group = inner.entries.remove(old_name).unwrap();
         group.name = trimmed.to_string();
         inner.entries.insert(group.name.clone(), group.clone());
+
+        // 级联更新其他分组中的引用
+        for other in inner.entries.values_mut() {
+            for r in other.references.iter_mut() {
+                if r.group == old_name {
+                    r.group = trimmed.to_string();
+                }
+            }
+        }
+
         self.save_locked(&inner);
         Ok(group)
     }
@@ -243,6 +443,10 @@ impl GroupManager {
         let mut inner = self.inner.write();
         let removed = inner.entries.remove(name).is_some();
         if removed {
+            // 级联清理其他分组对已删分组的引用
+            for other in inner.entries.values_mut() {
+                other.references.retain(|r| r.group != name);
+            }
             self.save_locked(&inner);
         }
         removed
@@ -268,6 +472,7 @@ impl GroupManager {
                         created_at: now.clone(),
                         token_by_credit_enabled: None,
                         credit_price: None,
+                        references: Vec::new(),
                     },
                 );
                 added += 1;
@@ -423,5 +628,96 @@ mod tests {
         assert_eq!(list[1].name, "beta");
 
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn references_crud_and_tier_resolution() {
+        let mgr = GroupManager::new();
+        mgr.create("expiring".into(), None).unwrap();
+        mgr.create("expiring2".into(), None).unwrap();
+        mgr.create("main".into(), None).unwrap();
+
+        // main 引用 expiring (prioritized) 和 expiring2 (fallback)
+        let refs = vec![
+            GroupReference {
+                group: "expiring".into(),
+                tier: ReferenceTier::Prioritized,
+                enabled: true,
+            },
+            GroupReference {
+                group: "expiring2".into(),
+                tier: ReferenceTier::Fallback,
+                enabled: true,
+            },
+        ];
+        let updated = mgr.update_references("main", refs).unwrap();
+        assert_eq!(updated.references.len(), 2);
+
+        // 验证 tier 解析
+        let tiers = mgr.resolve_group_tiers("main");
+        // expiring 是 prioritized -> 0
+        assert_eq!(tiers.get("expiring").copied(), Some(0));
+        // main 宿主是 1000
+        assert_eq!(tiers.get("main").copied(), Some(1000));
+        // expiring2 是 fallback -> 2000
+        assert_eq!(tiers.get("expiring2").copied(), Some(2000));
+
+        // 验证 referenced_by
+        assert_eq!(mgr.referenced_by("expiring"), vec!["main".to_string()]);
+        assert_eq!(mgr.referenced_by("expiring2"), vec!["main".to_string()]);
+
+        // 改名级联
+        mgr.rename("expiring", "expiring_renamed").unwrap();
+        let main_group = mgr.get("main").unwrap();
+        assert_eq!(main_group.references[0].group, "expiring_renamed");
+
+        // 删除级联
+        mgr.delete("expiring2");
+        let main_group = mgr.get("main").unwrap();
+        assert_eq!(main_group.references.len(), 1);
+        assert_eq!(main_group.references[0].group, "expiring_renamed");
+    }
+
+    #[test]
+    fn cycle_detection_rejects_cycles() {
+        let mgr = GroupManager::new();
+        mgr.create("g1".into(), None).unwrap();
+        mgr.create("g2".into(), None).unwrap();
+        mgr.create("g3".into(), None).unwrap();
+
+        // 自引用报错
+        assert!(mgr.update_references("g1", vec![GroupReference {
+            group: "g1".into(),
+            tier: ReferenceTier::Prioritized,
+            enabled: true,
+        }]).is_err());
+
+        // g1 -> g2
+        mgr.update_references("g1", vec![GroupReference {
+            group: "g2".into(),
+            tier: ReferenceTier::Prioritized,
+            enabled: true,
+        }]).unwrap();
+
+        // g2 -> g1 形成环，应报错
+        assert!(mgr.update_references("g2", vec![GroupReference {
+            group: "g1".into(),
+            tier: ReferenceTier::Prioritized,
+            enabled: true,
+        }]).is_err());
+
+        // g2 -> g3
+        mgr.update_references("g2", vec![GroupReference {
+            group: "g3".into(),
+            tier: ReferenceTier::Prioritized,
+            enabled: true,
+        }]).unwrap();
+
+        // g3 -> g1 (g1 -> g2 -> g3 -> g1) 形成间接环，应报错
+        assert!(mgr.update_references("g3", vec![GroupReference {
+            group: "g1".into(),
+            tier: ReferenceTier::Prioritized,
+            enabled: true,
+        }]).is_err());
     }
 }

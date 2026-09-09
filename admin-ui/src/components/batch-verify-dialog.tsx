@@ -6,7 +6,7 @@ import {
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Trash2 } from 'lucide-react'
+import { Trash2, AlertCircle } from 'lucide-react'
 
 export interface VerifyResult {
   id: number
@@ -155,8 +155,9 @@ export function BatchVerifyDialog({
 
           {/* 提示信息 */}
           {verifying && (
-            <p className="text-xs text-muted-foreground">
-              💡 验活在后台并发进行，你可以关闭此窗口，验活会继续。完成后可在此窗口删除失效/封号的账号。
+            <p className="text-xs text-muted-foreground flex items-center gap-1.5">
+              <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+              <span>验活在后台并发进行，你可以关闭此窗口，验活会继续。完成后可在此窗口删除失效/封号的账号。</span>
             </p>
           )}
         </div>

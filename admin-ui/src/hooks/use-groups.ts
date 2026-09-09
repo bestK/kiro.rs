@@ -26,7 +26,7 @@ export function useGroups(params?: GroupQueryParams) {
  * 内部复用 useGroups 缓存，不会重复打接口。
  */
 export function useGroupOptions(): string[] {
-  const { data } = useGroups()
+  const { data } = useGroups({ pageSize: 0 })
   return (data?.groups ?? []).map((g) => g.name)
 }
 

@@ -100,9 +100,9 @@ function SelectValue({ placeholder }: { placeholder?: React.ReactNode }) {
   const { value, labels } = useSelectContext()
   const label = value === undefined ? undefined : labels.get(value)
   if (label === undefined || label === null || label === '') {
-    return <span className="text-muted-foreground">{placeholder}</span>
+    return <span className="text-muted-foreground truncate whitespace-nowrap block">{placeholder}</span>
   }
-  return <>{label}</>
+  return <span className="truncate whitespace-nowrap block">{label}</span>
 }
 SelectValue.displayName = 'SelectValue'
 
@@ -126,7 +126,7 @@ const SelectTrigger = React.forwardRef<
       ref={triggerRef}
       disabled={disabled}
       className={cn(
-        'flex h-8 w-full items-center justify-between gap-2 rounded-md border border-border/70 bg-background px-2.5 text-[13px]',
+        'flex h-8 w-full items-center justify-between gap-2 rounded-md border border-border/70 bg-background px-2.5 text-[13px] overflow-hidden whitespace-nowrap',
         'focus:outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/30',
         'data-[state=open]:border-ring data-[state=open]:ring-2 data-[state=open]:ring-inset data-[state=open]:ring-ring/25',
         'disabled:cursor-not-allowed disabled:opacity-50 [&>span]:truncate',
@@ -194,7 +194,7 @@ const SelectItem = React.forwardRef<
       ref={ref}
       onSelect={() => onValueChange?.(value)}
       className={cn(
-        'relative flex cursor-default select-none items-center rounded py-1 pl-6 pr-2 text-xs outline-none transition-colors',
+        'relative flex cursor-default select-none items-center rounded py-1 pl-6 pr-2 text-xs outline-none transition-colors whitespace-nowrap',
         'focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-40',
         className
       )}

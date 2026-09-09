@@ -50,3 +50,26 @@ export async function deleteGroup(name: string, force = false): Promise<SuccessR
   const { data } = await api.delete<SuccessResponse>(path)
   return data
 }
+
+/** 按字段条件预览匹配的凭据 */
+export async function previewCredentialsFilter(
+  req: import('@/types/api').PreviewFilterRequest,
+): Promise<import('@/types/api').PreviewFilterResponse> {
+  const { data } = await api.post<import('@/types/api').PreviewFilterResponse>(
+    '/credentials/preview-filter',
+    req,
+  )
+  return data
+}
+
+/** 按字段条件批量归入凭据到目标分组 */
+export async function assignGroupCredentialsByFilter(
+  name: string,
+  req: import('@/types/api').AssignByFilterRequest,
+): Promise<import('@/types/api').AssignByFilterResponse> {
+  const { data } = await api.post<import('@/types/api').AssignByFilterResponse>(
+    `/groups/${encodeURIComponent(name)}/assign-by-filter`,
+    req,
+  )
+  return data
+}

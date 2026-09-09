@@ -653,20 +653,20 @@ export function KamImportDialog({ open, onOpenChange }: KamImportDialogProps) {
               </div>
 
               <div className="flex gap-4 text-sm">
-                <span className="text-green-600 dark:text-green-400">
-                  ✓ 验活成功: {results.filter(r => r.status === 'verified').length}
+                <span className="text-green-600 dark:text-green-400 flex items-center gap-1">
+                  <CheckCircle2 className="h-3.5 w-3.5" /> 验活成功: {results.filter(r => r.status === 'verified').length}
                 </span>
-                <span className="text-sky-600 dark:text-sky-400">
-                  ✓ 已导入: {results.filter(r => r.status === 'imported').length}
+                <span className="text-sky-600 dark:text-sky-400 flex items-center gap-1">
+                  <CheckCircle2 className="h-3.5 w-3.5" /> 已导入: {results.filter(r => r.status === 'imported').length}
                 </span>
-                <span className="text-yellow-600 dark:text-yellow-400">
-                  ⚠ 重复: {results.filter(r => r.status === 'duplicate').length}
+                <span className="text-yellow-600 dark:text-yellow-400 flex items-center gap-1">
+                  <AlertCircle className="h-3.5 w-3.5" /> 重复: {results.filter(r => r.status === 'duplicate').length}
                 </span>
-                <span className="text-red-600 dark:text-red-400">
-                  ✗ 失败: {results.filter(r => r.status === 'failed').length}
+                <span className="text-red-600 dark:text-red-400 flex items-center gap-1">
+                  <XCircle className="h-3.5 w-3.5" /> 失败: {results.filter(r => r.status === 'failed').length}
                 </span>
                 <span className="text-gray-500">
-                  ○ 跳过: {results.filter(r => r.status === 'skipped').length}
+                  跳过: {results.filter(r => r.status === 'skipped').length}
                 </span>
               </div>
 

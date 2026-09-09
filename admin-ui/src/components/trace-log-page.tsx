@@ -37,7 +37,7 @@ import { PageHeader } from '@/components/console/page-header'
 import { FloatingSectionNav, type NavSectionItem } from '@/components/console/floating-section-nav'
 import {
   TimeRangePicker,
-  rangeToStartMs,
+  rangeToTimeBounds,
   type TimeRange,
 } from '@/components/console/time-range'
 import {
@@ -848,9 +848,7 @@ function Select({
   )
 }
 
-const PAGE_SIZE = 50
-
-/** 默认时间窗口：24 小时。够覆盖"昨天那次失败"，又不至于一上来就全表扫。 */
+const DEFAULT_PAGE_SIZE = '50'
 const DEFAULT_RANGE_MINUTES = '1440'
 
 const URL_DEFAULTS = {
@@ -863,7 +861,11 @@ const URL_DEFAULTS = {
   switched: '',
   ip: '',
   range: DEFAULT_RANGE_MINUTES,
+  preset: '',
+  start: '',
+  end: '',
   page: '0',
+  pageSize: DEFAULT_PAGE_SIZE,
 }
 
 /** 搜索输入防抖：输入过程中不打请求，停手 300ms 再查 */
@@ -1062,9 +1064,27 @@ export function TraceLogPage() {
   }, [debouncedSearch])
 
   const page = Number(url.page) || 0
-  const range: TimeRange = {
-    minutes: url.range === '' ? null : Number(url.range),
-  }
+  const pageSize = Number(url.pageSize) || 50
+  const range: TimeRange = useMemo(() => {
+    if (url.start || url.end) {
+      return {
+        type: 'custom',
+        start: url.start || null,
+        end: url.end || null,
+      }
+    }
+    if (url.preset) {
+      return {
+        type: 'preset',
+        preset: url.preset,
+        minutes: url.range === '' ? null : Number(url.range) || null,
+      }
+    }
+    return {
+      type: 'preset',
+      minutes: url.range === '' ? null : Number(url.range),
+    }
+  }, [url.range, url.preset, url.start, url.end])
 
   const { data: keysData } = useClientKeys()
   const groupOptions = useGroupOptions()
@@ -1078,11 +1098,10 @@ export function TraceLogPage() {
     ...groupOptions.map((g) => ({ value: g, label: g })),
   ]
 
-  // 时间窗口按分钟数换算成起始秒；随自动刷新时钟滑动，始终表示“最近 N 分钟”。
-  const startTime = useMemo(() => {
-    const ms = rangeToStartMs(range, now)
-    return ms == null ? undefined : Math.floor(ms / 1000)
-  }, [url.range, now])
+  // 时间窗口按相对分钟数或绝对起止时间换算成秒级起止时间戳
+  const timeBounds = useMemo(() => {
+    return rangeToTimeBounds(range, now)
+  }, [range, now])
 
   // 按会话看时不限时间：一个会话可能跨越好几个小时，不该被「最近 24h」切掉
   const query: TraceQuery = {
@@ -1094,17 +1113,26 @@ export function TraceLogPage() {
     sessionId: url.session || undefined,
     onlySwitched: url.switched === '1' || undefined,
     clientIp: url.ip || undefined,
-    startTime: url.session ? undefined : startTime,
-    limit: PAGE_SIZE,
-    offset: page * PAGE_SIZE,
+    startTime: url.session ? undefined : timeBounds.startTime,
+    endTime: url.session ? undefined : timeBounds.endTime,
+    limit: pageSize,
+    offset: page * pageSize,
   }
   const { data, isLoading, isFetching, refetch } = useTraces(query)
   const records = data?.records ?? []
   const total = data?.total ?? 0
-  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
+  const totalPages = Math.max(1, Math.ceil(total / pageSize))
   const columns = useTraceColumns()
   const filterSession = (sessionId: string) => patchUrl({ session: sessionId, page: '0' })
   const filterIp = (ip: string) => patchUrl({ ip, page: '0' })
+
+  const isTimeFiltered = Boolean(
+    url.start ||
+    url.end ||
+    (url.preset && url.preset !== '24h') ||
+    url.range === '' ||
+    (url.range && url.range !== DEFAULT_RANGE_MINUTES)
+  )
 
   const filterCount = [
     url.status,
@@ -1115,6 +1143,7 @@ export function TraceLogPage() {
     url.session,
     url.switched,
     url.ip,
+    isTimeFiltered ? 'time' : '',
   ].filter(Boolean).length
 
 const TRACE_NAV_ITEMS: NavSectionItem[] = [
@@ -1164,12 +1193,33 @@ const TRACE_NAV_ITEMS: NavSectionItem[] = [
       <div id="traces-filter" className="flex flex-wrap items-center gap-2">
         <TimeRangePicker
           value={range}
-          onChange={(next) =>
-            patchUrl({
-              range: next.minutes == null ? '' : String(next.minutes),
-              page: '0',
-            })
-          }
+          onChange={(next) => {
+            if (next.type === 'custom') {
+              patchUrl({
+                start: next.start || '',
+                end: next.end || '',
+                range: '',
+                preset: '',
+                page: '0',
+              })
+            } else if (next.preset) {
+              patchUrl({
+                preset: next.preset,
+                range: next.minutes != null ? String(next.minutes) : '',
+                start: '',
+                end: '',
+                page: '0',
+              })
+            } else {
+              patchUrl({
+                range: next.minutes == null ? '' : String(next.minutes),
+                preset: '',
+                start: '',
+                end: '',
+                page: '0',
+              })
+            }
+          }}
         />
         <div className="relative">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -1319,32 +1369,57 @@ const TRACE_NAV_ITEMS: NavSectionItem[] = [
         </Button>
       </BulkBar>
 
-      {total > PAGE_SIZE && (
-        <div className="flex items-center justify-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => patchUrl({ page: String(Math.max(0, page - 1)) })}
-            disabled={page === 0 || isFetching}
-          >
-            <ChevronLeft className="h-3.5 w-3.5" />
-            上一页
-          </Button>
-          <div className="console-num px-3 text-[13px] text-muted-foreground">
-            第 <span className="font-medium text-foreground">{page + 1}</span> /{' '}
-            {totalPages} 页
+      {/* 分页控制栏 */}
+      {total > 0 && (
+        <div className="flex flex-col items-center justify-between gap-3 pt-2 sm:flex-row">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <span>每页</span>
+            <UiSelect
+              value={String(pageSize)}
+              onValueChange={(v) => {
+                patchUrl({ pageSize: v, page: '0' })
+              }}
+            >
+              <UiSelectTrigger className="h-7 w-[75px] text-xs">
+                <UiSelectValue />
+              </UiSelectTrigger>
+              <UiSelectContent>
+                <UiSelectItem value="10" className="text-xs">10</UiSelectItem>
+                <UiSelectItem value="20" className="text-xs">20</UiSelectItem>
+                <UiSelectItem value="50" className="text-xs">50</UiSelectItem>
+                <UiSelectItem value="100" className="text-xs">100</UiSelectItem>
+              </UiSelectContent>
+            </UiSelect>
+            <span>条 · 共 {total} 条日志</span>
           </div>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() =>
-              patchUrl({ page: String(Math.min(totalPages - 1, page + 1)) })
-            }
-            disabled={page >= totalPages - 1 || isFetching}
-          >
-            下一页
-            <ChevronRight className="h-3.5 w-3.5" />
-          </Button>
+
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 text-xs"
+              onClick={() => patchUrl({ page: String(Math.max(0, page - 1)) })}
+              disabled={page <= 0 || isFetching}
+            >
+              <ChevronLeft className="h-3.5 w-3.5 mr-1" />
+              上一页
+            </Button>
+            <span className="text-xs text-muted-foreground tabular-nums">
+              第 {page + 1} / {totalPages} 页
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 text-xs"
+              onClick={() =>
+                patchUrl({ page: String(Math.min(totalPages - 1, page + 1)) })
+              }
+              disabled={page >= totalPages - 1 || isFetching}
+            >
+              下一页
+              <ChevronRight className="h-3.5 w-3.5 ml-1" />
+            </Button>
+          </div>
         </div>
       )}
     </div>

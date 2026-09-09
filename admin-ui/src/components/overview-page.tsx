@@ -669,7 +669,7 @@ function UnifiedFilterToolbar({
               value={filters.draftGranularity}
               onValueChange={(v) => filters.setDraftGranularity(v as StatsGranularity)}
             >
-              <SelectTrigger className="h-7 w-[88px] text-xs">
+              <SelectTrigger className="h-7 w-[96px] text-xs">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent align="start">
@@ -689,7 +689,7 @@ function UnifiedFilterToolbar({
                   type="date"
                   value={filters.customStartDate}
                   onChange={(e) => filters.setCustomStartDate(e.target.value)}
-                  className="h-7 w-[125px] rounded-md pl-7 text-xs font-mono"
+                  className="h-7 w-[145px] sm:w-[155px] rounded-md pl-6.5 pr-1 text-xs font-mono"
                 />
               </div>
               <span className="text-xs text-muted-foreground">-</span>
@@ -699,13 +699,13 @@ function UnifiedFilterToolbar({
                   type="date"
                   value={filters.customEndDate}
                   onChange={(e) => filters.setCustomEndDate(e.target.value)}
-                  className="h-7 w-[125px] rounded-md pl-7 text-xs font-mono"
+                  className="h-7 w-[145px] sm:w-[155px] rounded-md pl-6.5 pr-1 text-xs font-mono"
                 />
               </div>
               <Button
                 size="sm"
                 variant="outline"
-                className="h-7 px-2.5 text-xs"
+                className="h-7 px-2.5 text-xs shrink-0"
                 disabled={
                   !filters.customStartDate ||
                   !filters.customEndDate ||

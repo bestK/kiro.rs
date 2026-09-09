@@ -337,6 +337,8 @@ pub struct AdminService {
     billing_verifications: Mutex<Vec<VerifyBillingHistoryItem>>,
     /// 自定义响应头管理器（热重载）
     custom_headers: Option<crate::model::custom_headers::CustomHeadersManager>,
+    /// 下游 NewAPI 配置（热重载）
+    downstream_newapi: Arc<parking_lot::RwLock<crate::model::downstream_newapi::DownstreamNewApiConfig>>,
 }
 
 /// Social 登录会话状态
@@ -679,6 +681,7 @@ impl AdminService {
             None => credential_metadata_schema(),
         };
 
+        let initial_newapi = token_manager.config().downstream_new_api.clone();
         let svc = Self {
             token_manager,
             kiro_provider: None,
@@ -698,6 +701,7 @@ impl AdminService {
             pricing_manager: None,
             billing_verifications: Mutex::new(Vec::new()),
             custom_headers: None,
+            downstream_newapi: Arc::new(parking_lot::RwLock::new(initial_newapi)),
         };
 
         // 后台任务：每 5 分钟清理过期的登录会话，防止内存泄漏
@@ -3075,9 +3079,14 @@ impl AdminService {
         Ok(self.get_custom_headers())
     }
 
+    /// 获取下游 NewAPI 配置（RwLock 句柄，可跨线程安全读取）
+    pub fn downstream_newapi(&self) -> Arc<parking_lot::RwLock<crate::model::downstream_newapi::DownstreamNewApiConfig>> {
+        Arc::clone(&self.downstream_newapi)
+    }
+
     /// 获取下游 NewAPI 配置
     pub fn get_downstream_newapi_config(&self) -> DownstreamNewApiConfigResponse {
-        let cfg = &self.token_manager.config().downstream_new_api;
+        let cfg = self.downstream_newapi.read();
         DownstreamNewApiConfigResponse {
             enabled: cfg.enabled,
             base_url: cfg.base_url.clone(),
@@ -3087,7 +3096,7 @@ impl AdminService {
         }
     }
 
-    /// 设置并持久化下游 NewAPI 配置
+    /// 设置并持久化下游 NewAPI 配置（更新内存 + 写入 config.json）
     pub fn set_downstream_newapi_config(
         &self,
         req: SetDownstreamNewApiConfigRequest,
@@ -3105,17 +3114,22 @@ impl AdminService {
             500_000.0
         };
 
+        let new_cfg = crate::model::downstream_newapi::DownstreamNewApiConfig {
+            enabled: req.enabled,
+            base_url,
+            admin_key,
+            cost_per_credit,
+            quota_per_unit,
+        };
+
+        let cfg_for_disk = new_cfg.clone();
         self.token_manager
             .update_config_file(move |config| {
-                config.downstream_new_api = crate::model::downstream_newapi::DownstreamNewApiConfig {
-                    enabled: req.enabled,
-                    base_url,
-                    admin_key,
-                    cost_per_credit,
-                    quota_per_unit,
-                };
+                config.downstream_new_api = cfg_for_disk;
             })
             .map_err(|e| AdminServiceError::InternalError(e.to_string()))?;
+
+        *self.downstream_newapi.write() = new_cfg;
 
         Ok(self.get_downstream_newapi_config())
     }

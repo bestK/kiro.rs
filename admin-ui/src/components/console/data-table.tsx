@@ -69,7 +69,7 @@ export interface ConsoleTableProps<T> {
   empty?: ReactNode
   /** 表格上方右侧的额外控件（与列控制菜单同一行） */
   toolbar?: ReactNode
-  /** 表格视觉风格：compact（默认 34px 紧凑运维）/ relaxed（宽松舒适，如 sub2api 风格） */
+  /** 表格视觉风格：compact（默认 34px 紧凑运维）/ relaxed（宽松舒适） */
   variant?: 'compact' | 'relaxed'
 }
 

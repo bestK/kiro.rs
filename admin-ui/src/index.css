@@ -277,7 +277,7 @@
     background: hsl(var(--primary) / 0.14);
   }
 
-  /* 宽松表格样式（sub2api 日志风格，舒适间距与自然行高） */
+  /* 宽松表格样式（舒适间距与自然行高） */
   .console-table-relaxed thead th {
     height: 38px;
     padding: 8px 14px;

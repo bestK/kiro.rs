@@ -106,7 +106,7 @@ function shortSession(id: string): string {
   return `${id.slice(0, 8)}…${id.slice(-4)}`
 }
 
-/** sub2api 风格状态徽章 */
+/** 状态徽章 */
 function StatusBadge({
   status,
   errorType,
@@ -161,7 +161,7 @@ function StatusBadge({
   )
 }
 
-/** sub2api 风格模型单元格 */
+/** 模型单元格 */
 function ModelCell({ rec }: { rec: TraceRecord }) {
   return (
     <div className="space-y-1 text-xs">
@@ -183,7 +183,7 @@ function ModelCell({ rec }: { rec: TraceRecord }) {
   )
 }
 
-/** sub2api 风格账号单元格 */
+/** 账号单元格 */
 function CredentialCell({ rec }: { rec: TraceRecord }) {
   const label = credLabel(rec.finalCredentialId, rec.finalEmail)
   const isSwitched =
@@ -208,7 +208,7 @@ function CredentialCell({ rec }: { rec: TraceRecord }) {
   )
 }
 
-/** sub2api 风格故障转移单元格 */
+/** 故障转移单元格 */
 function AttemptCell({ rec }: { rec: TraceRecord }) {
   const attempts = rec.attempts ?? []
   if (attempts.length <= 1) {
@@ -244,7 +244,7 @@ function AttemptCell({ rec }: { rec: TraceRecord }) {
   )
 }
 
-/** sub2api 风格 Token 单元格（ArrowDown + ArrowUp + 缓存图标 + 悬浮详情圆圈） */
+/** Token 单元格（ArrowDown + ArrowUp + 缓存图标 + 悬浮详情圆圈） */
 function TokensCell({ rec }: { rec: TraceRecord }) {
   const input = rec.inputTokens ?? 0
   const output = rec.outputTokens ?? 0
@@ -295,7 +295,7 @@ function TokensCell({ rec }: { rec: TraceRecord }) {
         )}
       </div>
 
-      {/* sub2api 风格详情提示圆圈按钮 */}
+      {/* 详情提示圆圈按钮 */}
       <Tooltip>
         <TooltipTrigger asChild>
           <button
@@ -356,7 +356,7 @@ function TokensCell({ rec }: { rec: TraceRecord }) {
   )
 }
 
-/** sub2api 风格费用单元格 */
+/** 费用单元格 */
 function CostCell({ rec }: { rec: TraceRecord }) {
   if (rec.credits == null || rec.credits <= 0) {
     return <span className="text-xs text-gray-400 dark:text-gray-500 font-mono">-</span>
@@ -368,7 +368,7 @@ function CostCell({ rec }: { rec: TraceRecord }) {
   )
 }
 
-/** sub2api 风格耗时健康度单元格（左侧细柱，右侧首字/总耗时） */
+/** 耗时健康度单元格（左侧细柱，右侧首字/总耗时） */
 function LatencyCell({ rec }: { rec: TraceRecord }) {
   const durationMs = rec.durationMs ?? 0
   const firstTokenMs = rec.firstTokenMs
@@ -419,7 +419,7 @@ function LatencyCell({ rec }: { rec: TraceRecord }) {
   )
 }
 
-/** sub2api 风格请求 ID 单元格（截断显示 + 复制小图标） */
+/** 请求 ID 单元格（截断显示 + 复制小图标） */
 function RequestIdCell({ traceId }: { traceId: string }) {
   return (
     <div className="flex max-w-[140px] items-center gap-1.5 text-xs">
@@ -544,7 +544,7 @@ function useSlashFocus(ref: React.RefObject<HTMLInputElement | null>) {
   }, [ref])
 }
 
-/** 表格列定义（参照 sub2api 设计） */
+/** 表格列定义 */
 function useTraceColumns({
   onFilterSession,
   onFilterIp,

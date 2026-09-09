@@ -2168,6 +2168,8 @@ fn group_to_item(g: &super::groups::Group, state: &AdminState) -> super::types::
         credit_price: g.credit_price,
         simulated_cache_enabled: g.simulated_cache_enabled,
         simulated_cache_ratio: g.simulated_cache_ratio,
+        load_balancing_mode: g.load_balancing_mode.clone(),
+        invert_priority: g.invert_priority,
         references: g.references.clone(),
         referenced_by,
     }
@@ -2238,6 +2240,8 @@ pub async fn create_group(
         payload.credit_price,
         payload.simulated_cache_enabled,
         payload.simulated_cache_ratio,
+        payload.load_balancing_mode,
+        payload.invert_priority,
         payload.references.unwrap_or_default(),
     ) {
         Ok(g) => {
@@ -2373,6 +2377,31 @@ pub async fn update_group(
             reset_cache,
             payload.simulated_cache_ratio,
             reset_cache_ratio,
+        ) {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(super::types::AdminErrorResponse::invalid_request(
+                    e.to_string(),
+                )),
+            )
+                .into_response();
+        }
+    }
+
+    // 3.5 改调度策略（负载均衡模式与优先级反转）
+    let reset_lbm = payload.reset_load_balancing_mode.unwrap_or(false);
+    let reset_inv = payload.reset_invert_priority.unwrap_or(false);
+    if payload.load_balancing_mode.is_some()
+        || reset_lbm
+        || payload.invert_priority.is_some()
+        || reset_inv
+    {
+        if let Err(e) = state.groups.update_dispatch_mode(
+            &current_name,
+            payload.load_balancing_mode,
+            reset_lbm,
+            payload.invert_priority,
+            reset_inv,
         ) {
             return (
                 StatusCode::BAD_REQUEST,

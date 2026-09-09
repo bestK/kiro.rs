@@ -1517,6 +1517,12 @@ pub struct GroupItem {
     /// 模拟 Prompt 缓存命中率（None 表示继承全局配置）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub simulated_cache_ratio: Option<f64>,
+    /// 负载均衡模式（None 表示继承全局配置: "priority" 或 "balanced"）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub load_balancing_mode: Option<String>,
+    /// 优先级反转（None 表示继承全局配置；true 表示数字大优先，false 表示数字小优先）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub invert_priority: Option<bool>,
     /// 本分组引用的其他分组列表
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub references: Vec<crate::admin::groups::GroupReference>,
@@ -1566,13 +1572,17 @@ pub struct CreateGroupRequest {
     #[serde(default)]
     pub simulated_cache_ratio: Option<f64>,
     #[serde(default)]
+    pub load_balancing_mode: Option<String>,
+    #[serde(default)]
+    pub invert_priority: Option<bool>,
+    #[serde(default)]
     pub references: Option<Vec<crate::admin::groups::GroupReference>>,
     /// 可选：创建分组后立即按字段条件自动归入匹配的凭据
     #[serde(default)]
     pub auto_assign_filter: Option<CredentialFilterCriteria>,
 }
 
-/// 更新分组请求（改名 / 改备注 / 改积分返回配置 / 改引用）
+/// 更新分组请求（改名 / 改备注 / 改积分返回配置 / 改调度策略 / 改引用）
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateGroupRequest {
@@ -1606,6 +1616,18 @@ pub struct UpdateGroupRequest {
     /// 是否重置模拟 Prompt 缓存命中率为继承
     #[serde(default)]
     pub reset_simulated_cache_ratio: Option<bool>,
+    /// 负载均衡模式（priority / balanced）
+    #[serde(default)]
+    pub load_balancing_mode: Option<String>,
+    /// 是否重置负载均衡模式为继承全局
+    #[serde(default)]
+    pub reset_load_balancing_mode: Option<bool>,
+    /// 优先级反转开关（true: 数字大优先, false: 数字小优先）
+    #[serde(default)]
+    pub invert_priority: Option<bool>,
+    /// 是否重置优先级反转为继承全局
+    #[serde(default)]
+    pub reset_invert_priority: Option<bool>,
     /// 引用的其他分组列表；传入则覆盖更新
     #[serde(default)]
     pub references: Option<Vec<crate::admin::groups::GroupReference>>,

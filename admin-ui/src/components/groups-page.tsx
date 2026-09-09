@@ -771,6 +771,9 @@ export function GroupsPage() {
   const [createCreditPrice, setCreateCreditPrice] = useState('')
   const [createCacheMode, setCreateCacheMode] = useState<'inherit' | 'custom' | 'disabled'>('inherit')
   const [createCacheRatio, setCreateCacheRatio] = useState('80')
+  // 分组级调度策略：'inherit' 跟随全局，其余为分组独立覆盖
+  const [createDispatchMode, setCreateDispatchMode] = useState<'inherit' | 'priority' | 'balanced'>('inherit')
+  const [createInvertMode, setCreateInvertMode] = useState<'inherit' | 'on' | 'off'>('inherit')
   const [createReferences, setCreateReferences] = useState<GroupReference[]>([])
   const [createFilterEnabled, setCreateFilterEnabled] = useState(false)
   const [createFilter, setCreateFilter] = useState<CredentialFilterCriteria>({ expiryWindow: '3d' })
@@ -786,6 +789,8 @@ export function GroupsPage() {
   const [editCreditPrice, setEditCreditPrice] = useState('')
   const [editCacheMode, setEditCacheMode] = useState<'inherit' | 'custom' | 'disabled'>('inherit')
   const [editCacheRatio, setEditCacheRatio] = useState('80')
+  const [editDispatchMode, setEditDispatchMode] = useState<'inherit' | 'priority' | 'balanced'>('inherit')
+  const [editInvertMode, setEditInvertMode] = useState<'inherit' | 'on' | 'off'>('inherit')
   const [editReferences, setEditReferences] = useState<GroupReference[]>([])
 
   const [batchDeleting, setBatchDeleting] = useState(false)
@@ -826,6 +831,8 @@ export function GroupsPage() {
     setCreateCreditPrice('')
     setCreateCacheMode('inherit')
     setCreateCacheRatio('80')
+    setCreateDispatchMode('inherit')
+    setCreateInvertMode('inherit')
     setCreateReferences([])
     setCreateFilterEnabled(false)
     setCreateFilter({ expiryWindow: '3d' })
@@ -867,6 +874,9 @@ export function GroupsPage() {
           createCreditMode === 'enabled' && createCacheMode === 'custom' && Number.isFinite(cacheRatioNum)
             ? cacheRatioNum / 100
             : undefined,
+        loadBalancingMode: createDispatchMode === 'inherit' ? undefined : createDispatchMode,
+        invertPriority:
+          createInvertMode === 'inherit' ? undefined : createInvertMode === 'on',
         references: createReferences.length > 0 ? createReferences : undefined,
         autoAssignFilter: createFilterEnabled ? createFilter : undefined,
       })
@@ -896,6 +906,8 @@ export function GroupsPage() {
     setEditCacheRatio(
       g.simulatedCacheRatio != null ? String(Math.round(g.simulatedCacheRatio * 100)) : '80'
     )
+    setEditDispatchMode(g.loadBalancingMode ?? 'inherit')
+    setEditInvertMode(g.invertPriority == null ? 'inherit' : g.invertPriority ? 'on' : 'off')
     setEditReferences(g.references ? JSON.parse(JSON.stringify(g.references)) : [])
     setEditOpen(true)
   }
@@ -944,6 +956,10 @@ export function GroupsPage() {
               : undefined,
           resetSimulatedCacheRatio:
             editCreditMode === 'disabled' || editCacheMode !== 'custom' ? true : undefined,
+          loadBalancingMode: editDispatchMode === 'inherit' ? undefined : editDispatchMode,
+          resetLoadBalancingMode: editDispatchMode === 'inherit' ? true : undefined,
+          invertPriority: editInvertMode === 'inherit' ? undefined : editInvertMode === 'on',
+          resetInvertPriority: editInvertMode === 'inherit' ? true : undefined,
           references: editReferences,
         },
       })
@@ -1215,6 +1231,40 @@ export function GroupsPage() {
               {g.simulatedCacheRatio != null && (
                 <span className="text-[10px] text-muted-foreground">
                   缓存 {Math.round(g.simulatedCacheRatio * 100)}%
+                </span>
+              )}
+            </div>
+          )
+        },
+      },
+      {
+        id: 'dispatch',
+        header: '调度策略',
+        cell: (g) => {
+          // 两项都未覆盖时不占视觉重量，直接显示跟随全局
+          if (g.loadBalancingMode == null && g.invertPriority == null) {
+            return <span className="text-xs text-muted-foreground">跟随全局</span>
+          }
+          return (
+            <div className="flex flex-col gap-1 items-start">
+              {g.loadBalancingMode != null ? (
+                <Badge
+                  variant="outline"
+                  className="border-sky-500/40 text-sky-600 bg-sky-500/10 font-normal"
+                  title={
+                    g.loadBalancingMode === 'balanced'
+                      ? '分层最少使用：同层内轮流挑用量最少的账号'
+                      : '按优先级顺序耗尽：先用完高优先级账号'
+                  }
+                >
+                  {g.loadBalancingMode === 'balanced' ? '负载均衡' : '优先级'}
+                </Badge>
+              ) : (
+                <span className="text-[11px] text-muted-foreground">模式随全局</span>
+              )}
+              {g.invertPriority != null && (
+                <span className="text-[11px] text-muted-foreground">
+                  {g.invertPriority ? '数字大优先' : '数字小优先'}
                 </span>
               )}
             </div>
@@ -1620,6 +1670,82 @@ export function GroupsPage() {
                   </div>
                 </>
               )}
+
+              {/* 调度策略与计费无关，因此放在计费折算分支之外，始终可配 */}
+              <div className="space-y-2 pt-2 border-t">
+                <div className="space-y-1">
+                  <label className="text-sm font-medium">调度策略</label>
+                  <div className="grid grid-cols-3 gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={createDispatchMode === 'inherit' ? 'default' : 'outline'}
+                      className="text-xs"
+                      onClick={() => setCreateDispatchMode('inherit')}
+                    >
+                      跟随全局
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={createDispatchMode === 'priority' ? 'default' : 'outline'}
+                      className="text-xs"
+                      onClick={() => setCreateDispatchMode('priority')}
+                    >
+                      优先级
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={createDispatchMode === 'balanced' ? 'default' : 'outline'}
+                      className="text-xs"
+                      onClick={() => setCreateDispatchMode('balanced')}
+                    >
+                      负载均衡
+                    </Button>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">
+                    {createDispatchMode === 'inherit' && '沿用全局设置中的负载均衡模式。'}
+                    {createDispatchMode === 'priority' && '按优先级顺序耗尽：先用完高优先级账号再切下一个，适合临期号优先消耗。'}
+                    {createDispatchMode === 'balanced' && '分层最少使用：同层内轮流挑用量最少的账号，额度消耗更均匀。'}
+                  </p>
+                </div>
+
+                {createDispatchMode !== 'balanced' && (
+                  <div className="space-y-1 pl-0.5">
+                    <label className="text-xs font-medium text-muted-foreground">优先级方向</label>
+                    <div className="grid grid-cols-3 gap-2">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant={createInvertMode === 'inherit' ? 'secondary' : 'ghost'}
+                        className="h-7 text-xs"
+                        onClick={() => setCreateInvertMode('inherit')}
+                      >
+                        跟随全局
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant={createInvertMode === 'off' ? 'secondary' : 'ghost'}
+                        className="h-7 text-xs"
+                        onClick={() => setCreateInvertMode('off')}
+                      >
+                        数字小优先
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant={createInvertMode === 'on' ? 'secondary' : 'ghost'}
+                        className="h-7 text-xs"
+                        onClick={() => setCreateInvertMode('on')}
+                      >
+                        数字大优先
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
             <DialogFooter>
               <Button variant="outline" onClick={() => setCreateOpen(false)} disabled={createGroup.isPending}>
@@ -1793,6 +1919,83 @@ export function GroupsPage() {
                   </div>
                 </>
               )}
+
+              {/* 调度策略与计费无关，因此放在计费折算分支之外，始终可配 */}
+              <div className="space-y-2 pt-2 border-t">
+                <div className="space-y-1">
+                  <label className="text-sm font-medium">调度策略</label>
+                  <div className="grid grid-cols-3 gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={editDispatchMode === 'inherit' ? 'default' : 'outline'}
+                      className="text-xs"
+                      onClick={() => setEditDispatchMode('inherit')}
+                    >
+                      跟随全局
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={editDispatchMode === 'priority' ? 'default' : 'outline'}
+                      className="text-xs"
+                      onClick={() => setEditDispatchMode('priority')}
+                    >
+                      优先级
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={editDispatchMode === 'balanced' ? 'default' : 'outline'}
+                      className="text-xs"
+                      onClick={() => setEditDispatchMode('balanced')}
+                    >
+                      负载均衡
+                    </Button>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">
+                    {editDispatchMode === 'inherit' && '沿用全局设置中的负载均衡模式。'}
+                    {editDispatchMode === 'priority' && '按优先级顺序耗尽：先用完高优先级账号再切下一个，适合临期号优先消耗。'}
+                    {editDispatchMode === 'balanced' && '分层最少使用：同层内轮流挑用量最少的账号，额度消耗更均匀。'}
+                  </p>
+                </div>
+
+                {editDispatchMode !== 'balanced' && (
+                  <div className="space-y-1 pl-0.5">
+                    <label className="text-xs font-medium text-muted-foreground">优先级方向</label>
+                    <div className="grid grid-cols-3 gap-2">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant={editInvertMode === 'inherit' ? 'secondary' : 'ghost'}
+                        className="h-7 text-xs"
+                        onClick={() => setEditInvertMode('inherit')}
+                      >
+                        跟随全局
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant={editInvertMode === 'off' ? 'secondary' : 'ghost'}
+                        className="h-7 text-xs"
+                        onClick={() => setEditInvertMode('off')}
+                      >
+                        数字小优先
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant={editInvertMode === 'on' ? 'secondary' : 'ghost'}
+                        className="h-7 text-xs"
+                        onClick={() => setEditInvertMode('on')}
+                      >
+                        数字大优先
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </div>
+
               {editTarget && (editTarget.credentialCount > 0 || editTarget.clientKeyCount > 0 || (editTarget.referencedBy?.length ?? 0) > 0) && (
                 <p className="text-xs text-amber-600">
                   当前被 {editTarget.credentialCount} 凭据 + {editTarget.clientKeyCount} 客户端 Key + {editTarget.referencedBy?.length ?? 0} 其他分组引用，改名会自动同步。

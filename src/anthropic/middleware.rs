@@ -322,6 +322,8 @@ mod tests {
             credit_price: price,
             simulated_cache_enabled: cache_enabled,
             simulated_cache_ratio: cache_ratio,
+            load_balancing_mode: None,
+            invert_priority: None,
             references: Vec::new(),
         }
     }

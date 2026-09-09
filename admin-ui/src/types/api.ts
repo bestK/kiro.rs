@@ -840,6 +840,10 @@ export interface GroupItem {
   creditPrice?: number | null
   simulatedCacheEnabled?: boolean | null
   simulatedCacheRatio?: number | null
+  /** 分组级负载均衡模式（null/undefined 表示继承全局） */
+  loadBalancingMode?: LoadBalancingMode | null
+  /** 分组级优先级反转（null/undefined 表示继承全局） */
+  invertPriority?: boolean | null
 }
 
 export interface GroupsResponse {
@@ -856,6 +860,9 @@ export interface GroupQueryParams {
   search?: string
 }
 
+/** 负载均衡模式：priority = 按优先级顺序耗尽，balanced = 分层最少使用 */
+export type LoadBalancingMode = 'priority' | 'balanced'
+
 export interface CreateGroupRequest {
   name: string
   description?: string
@@ -863,6 +870,8 @@ export interface CreateGroupRequest {
   creditPrice?: number
   simulatedCacheEnabled?: boolean
   simulatedCacheRatio?: number
+  loadBalancingMode?: LoadBalancingMode
+  invertPriority?: boolean
   references?: GroupReference[]
   autoAssignFilter?: CredentialFilterCriteria
 }
@@ -880,6 +889,14 @@ export interface UpdateGroupRequest {
   resetSimulatedCache?: boolean
   simulatedCacheRatio?: number
   resetSimulatedCacheRatio?: boolean
+  /** 分组级负载均衡模式 */
+  loadBalancingMode?: LoadBalancingMode
+  /** 重置负载均衡模式为继承全局 */
+  resetLoadBalancingMode?: boolean
+  /** 分组级优先级反转 */
+  invertPriority?: boolean
+  /** 重置优先级反转为继承全局 */
+  resetInvertPriority?: boolean
   references?: GroupReference[]
 }
 

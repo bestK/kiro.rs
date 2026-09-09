@@ -1936,7 +1936,7 @@ impl MultiTokenManager {
         now: Instant,
     ) -> Option<u64> {
         let group_tiers = self.resolve_group_tiers(group);
-        let invert = self.invert_priority.load(Ordering::Relaxed);
+        let (_mode, invert) = self.resolve_load_balancing_for_group(group);
         entries
             .iter()
             .filter(|entry| {
@@ -2118,10 +2118,8 @@ impl MultiTokenManager {
             return None;
         }
 
-        let mode = self.load_balancing_mode.lock().clone();
+        let (mode, invert) = self.resolve_load_balancing_for_group(group);
         let mode = mode.as_str();
-
-        let invert = self.invert_priority.load(Ordering::Relaxed);
         match mode {
             "balanced" => {
                 // Tiered Least-Used 策略：
@@ -2276,7 +2274,8 @@ impl MultiTokenManager {
             }
 
             let (id, credentials, is_balanced, route) = {
-                let is_balanced = self.load_balancing_mode.lock().as_str() == "balanced";
+                let (mode, _invert) = self.resolve_load_balancing_for_group(group);
+                let is_balanced = mode.as_str() == "balanced";
 
                 // 会话粘性优先：绑定凭据仍可用就沿用，保住上游按账号隔离的 prompt cache。
                 // 粘性未命中时两种模式都按当前请求重新选择。priority 模式不能复用 current_id，
@@ -4828,6 +4827,24 @@ impl MultiTokenManager {
     /// 查询指定分组的有效凭据数量（包含直接归属和启用引用的子分组凭据去重计数）
     pub fn count_effective_credentials_for_group(&self, group: &str) -> usize {
         self.total_count_in_group(Some(group))
+    }
+
+    /// 解析指定请求分组的负载均衡模式与优先级反转配置。
+    /// 若分组有独立配置则使用分组级覆盖，否则回退到全局配置。
+    pub fn resolve_load_balancing_for_group(&self, group: Option<&str>) -> (String, bool) {
+        let global_mode = self.load_balancing_mode.lock().clone();
+        let global_invert = self.invert_priority.load(Ordering::Relaxed);
+        let Some(g) = group else {
+            return (global_mode, global_invert);
+        };
+        if let Some(mgr) = self.group_manager.read().as_ref() {
+            let (group_mode, group_invert) = mgr.resolve_load_balancing(g);
+            let mode = group_mode.unwrap_or(global_mode);
+            let invert = group_invert.unwrap_or(global_invert);
+            (mode, invert)
+        } else {
+            (global_mode, global_invert)
+        }
     }
 
     /// 获取负载均衡模式（Admin API）
@@ -7945,6 +7962,109 @@ mod tests {
         assert_eq!(manager.snapshot().current_id, 1);
         let ctx = manager.acquire_context(None, None).await.unwrap();
         assert_eq!(ctx.id, 1);
+    }
+
+    #[tokio::test]
+    async fn test_group_level_load_balancing_and_invert_priority() {
+        let group_mgr = Arc::new(crate::admin::GroupManager::new());
+        // group_inherit: 继承全局配置
+        group_mgr
+            .create_with_options(
+                "group_inherit".into(),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Vec::new(),
+            )
+            .unwrap();
+
+        // group_inverted: 独立配置优先级反转 (true: 大数优先)
+        group_mgr
+            .create_with_options(
+                "group_inverted".into(),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(true),
+                Vec::new(),
+            )
+            .unwrap();
+
+        // group_normal: 独立配置标准优先级 (false: 小数优先)
+        group_mgr
+            .create_with_options(
+                "group_normal".into(),
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some("priority".into()),
+                Some(false),
+                Vec::new(),
+            )
+            .unwrap();
+
+        // group_balanced: 独立配置均衡负载模式
+        group_mgr
+            .create_with_options(
+                "group_balanced".into(),
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some("balanced".into()),
+                None,
+                Vec::new(),
+            )
+            .unwrap();
+
+        let mut c1 = grouped_cred("c1", &["group_inherit", "group_inverted", "group_normal", "group_balanced"]);
+        c1.priority = 10;
+        let mut c2 = grouped_cred("c2", &["group_inherit", "group_inverted", "group_normal", "group_balanced"]);
+        c2.priority = 80;
+
+        let manager = MultiTokenManager::new(
+            Config::default(), // 默认 priority, invert_priority = false
+            vec![c1, c2],
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        manager.set_group_manager(group_mgr);
+
+        // 1. group_inherit 继承全局 (invert_priority = false) -> 选用数字小的 c1 (id 1, priority 10)
+        let ctx = manager.acquire_context(None, Some("group_inherit")).await.unwrap();
+        assert_eq!(ctx.id, 1);
+
+        // 2. group_inverted 独立配置 invert_priority = true -> 选用数字大的 c2 (id 2, priority 80)
+        let ctx = manager.acquire_context(None, Some("group_inverted")).await.unwrap();
+        assert_eq!(ctx.id, 2);
+
+        // 3. 将全局 invert_priority 改为 true
+        manager.set_invert_priority(true).unwrap();
+
+        // 现在 group_inherit 继承全局的 true -> 选用数字大的 c2 (id 2)
+        let ctx = manager.acquire_context(None, Some("group_inherit")).await.unwrap();
+        assert_eq!(ctx.id, 2);
+
+        // group_normal 独立配置了 false -> 依然选用数字小的 c1 (id 1)
+        let ctx = manager.acquire_context(None, Some("group_normal")).await.unwrap();
+        assert_eq!(ctx.id, 1);
+
+        // 4. group_balanced 独立配置了 balanced 模式
+        let (mode, invert) = manager.resolve_load_balancing_for_group(Some("group_balanced"));
+        assert_eq!(mode, "balanced");
+        assert!(invert); // 继承自全局的 true
     }
 
     #[tokio::test]

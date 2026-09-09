@@ -254,10 +254,10 @@ export function TimeRangePicker({
           variant={isCustomActive ? 'default' : 'outline'}
           disabled={disabled}
           title={`时间范围：${rangeLabel(value)}`}
-          className="h-8 text-xs font-normal gap-1.5"
+          className="h-8 text-xs font-normal gap-2 justify-between"
         >
-          <Calendar className="h-3.5 w-3.5" />
           <span className="truncate max-w-[200px]">{rangeLabel(value)}</span>
+          <Calendar className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-[320px] p-3 space-y-3">

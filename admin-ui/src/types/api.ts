@@ -735,20 +735,33 @@ export interface TraceQuery {
   onlySwitched?: boolean
   /** 客户端 IP 精确匹配 */
   clientIp?: string
+  /** 下游用户名精确匹配 */
+  downstreamUser?: string
   /** 时间窗口起点（Unix 秒，含）。与后端 traces.ts_epoch 同单位 */
   startTime?: number
-  /** 时间窗口终点（Unix 秒，含） */
   endTime?: number
-  /** 关键字模糊匹配：模型名 / traceId / 错误信息 / sessionId / clientIp */
+  /** 关键字模糊匹配：模型名 / traceId / 错误信息 / sessionId / clientIp / 下游用户名 / 令牌名 */
   q?: string
   limit?: number
   offset?: number
+}
+
+/** 链路追踪查询统计汇总 */
+export interface TraceStats {
+  totalCredits: number
+  totalRevenue: number
+  totalCost: number
+  totalProfit: number
+  totalQuota: number
+  matchedCount: number
 }
 
 /** 分页响应 */
 export interface TracePage {
   records: TraceRecord[]
   total: number
+  stats?: TraceStats
+  downstreamUsers?: string[]
 }
 
 /** 单凭据失败分类计数（鉴权 / 账号风控 / 其他） */

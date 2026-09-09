@@ -684,23 +684,23 @@ function UnifiedFilterToolbar({
             {/* 日期范围微调 */}
             <div className="flex items-center gap-1.5">
               <div className="relative">
-                <Calendar className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
                 <Input
                   type="date"
                   value={filters.customStartDate}
                   onChange={(e) => filters.setCustomStartDate(e.target.value)}
-                  className="h-7 w-[145px] sm:w-[155px] rounded-md pl-6.5 pr-1 text-xs font-mono"
+                  className="h-7 w-[145px] sm:w-[155px] rounded-md pl-2.5 pr-7 text-xs font-mono [&::-webkit-calendar-picker-indicator]:opacity-0 [&::-webkit-calendar-picker-indicator]:absolute [&::-webkit-calendar-picker-indicator]:inset-0 [&::-webkit-calendar-picker-indicator]:cursor-pointer"
                 />
+                <Calendar className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
               </div>
               <span className="text-xs text-muted-foreground">-</span>
               <div className="relative">
-                <Calendar className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
                 <Input
                   type="date"
                   value={filters.customEndDate}
                   onChange={(e) => filters.setCustomEndDate(e.target.value)}
-                  className="h-7 w-[145px] sm:w-[155px] rounded-md pl-6.5 pr-1 text-xs font-mono"
+                  className="h-7 w-[145px] sm:w-[155px] rounded-md pl-2.5 pr-7 text-xs font-mono [&::-webkit-calendar-picker-indicator]:opacity-0 [&::-webkit-calendar-picker-indicator]:absolute [&::-webkit-calendar-picker-indicator]:inset-0 [&::-webkit-calendar-picker-indicator]:cursor-pointer"
                 />
+                <Calendar className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
               </div>
               <Button
                 size="sm"

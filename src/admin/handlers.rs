@@ -1872,6 +1872,10 @@ pub async fn list_traces(
             .get("clientIp")
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty()),
+        downstream_user: params
+            .get("downstreamUser")
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty()),
         credential_ids,
         // startTime / endTime 为 Unix 秒，与 traces.ts_epoch 同单位
         start_ts: params.get("startTime").and_then(|s| s.parse::<i64>().ok()),
@@ -1890,10 +1894,12 @@ pub async fn list_traces(
             .and_then(|s| s.parse::<usize>().ok())
             .unwrap_or(0),
     };
-    let (records, total) = state.trace_store.query_paged(&query);
+    let newapi_cfg = state.service.get_downstream_newapi_config();
+    let (records, total, mut stats) = state
+        .trace_store
+        .query_paged_with_stats(&query, newapi_cfg.cost_per_credit);
 
     // 下游 NewAPI 关联查询与本地 SQLite 缓存
-    let newapi_cfg = state.service.get_downstream_newapi_config();
     let mut newapi_map: HashMap<String, crate::admin::trace_db::NewApiLogCacheEntry> = HashMap::new();
 
     if newapi_cfg.enabled && !newapi_cfg.base_url.is_empty() && !newapi_cfg.admin_key.is_empty() {
@@ -1954,6 +1960,11 @@ pub async fn list_traces(
                         .collect();
 
                     state.trace_store.save_newapi_cache_batch(&to_cache);
+                    if !to_cache.is_empty() {
+                        stats = state
+                            .trace_store
+                            .get_stats(&query, newapi_cfg.cost_per_credit);
+                    }
 
                     for entry in fetched_entries {
                         newapi_map.insert(entry.trace_id.clone(), entry);
@@ -2080,7 +2091,13 @@ pub async fn list_traces(
             })
         })
         .collect();
-    Json(serde_json::json!({ "records": enriched, "total": total }))
+    let downstream_users = state.trace_store.list_cached_downstream_users();
+    Json(serde_json::json!({
+        "records": enriched,
+        "total": total,
+        "stats": stats,
+        "downstreamUsers": downstream_users,
+    }))
 }
 
 /// GET /api/admin/traces/failure-stats

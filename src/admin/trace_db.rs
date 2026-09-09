@@ -252,10 +252,24 @@ pub struct TraceQuery {
     pub only_switched: bool,
     /// 客户端 IP 精确匹配
     pub client_ip: Option<String>,
+    /// 下游用户名过滤（基于 newapi_log_cache）
+    pub downstream_user: Option<String>,
     /// 返回条数上限
     pub limit: usize,
     /// 偏移量（分页用）
     pub offset: usize,
+}
+
+/// 链路追踪查询统计汇总
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TraceQueryStats {
+    pub total_credits: f64,
+    pub total_revenue: f64,
+    pub total_cost: f64,
+    pub total_profit: f64,
+    pub total_quota: i64,
+    pub matched_count: usize,
 }
 
 /// SQLite 持久化存储
@@ -358,7 +372,8 @@ impl TraceStore {
                  queried_at    INTEGER NOT NULL,
                  status        TEXT NOT NULL
              );
-             CREATE INDEX IF NOT EXISTS idx_newapi_cache_queried_at ON newapi_log_cache(queried_at);",
+             CREATE INDEX IF NOT EXISTS idx_newapi_cache_queried_at ON newapi_log_cache(queried_at);
+             CREATE INDEX IF NOT EXISTS idx_newapi_cache_username ON newapi_log_cache(username);",
         )?;
         // 老库 key_source 列首次添加后，按 key_id 语义回填：master apiKey (key_id=0) 之外都视为客户端 Key。
         if key_source_added {
@@ -478,6 +493,7 @@ impl TraceStore {
     }
 
     /// 分页查询：返回 (当前页记录, 符合条件的总数)。仅 warn 失败，返回 (空, 0)。
+    #[allow(dead_code)]
     pub fn query_paged(&self, q: &TraceQuery) -> (Vec<TraceRecord>, usize) {
         let conn = self.conn.lock();
         match Self::query_inner(&conn, q) {
@@ -487,6 +503,42 @@ impl TraceStore {
                 (Vec::new(), 0)
             }
         }
+    }
+
+    /// 分页查询并计算汇总统计：返回 (当前页记录, 符合条件的总数, 汇总统计)。
+    pub fn query_paged_with_stats(
+        &self,
+        q: &TraceQuery,
+        cost_per_credit: f64,
+    ) -> (Vec<TraceRecord>, usize, TraceQueryStats) {
+        let conn = self.conn.lock();
+        let records_res = Self::query_inner(&conn, q);
+        let stats_res = Self::calc_stats_inner(&conn, q, cost_per_credit);
+        match (records_res, stats_res) {
+            (Ok((records, total)), Ok(stats)) => (records, total, stats),
+            (Ok((records, total)), Err(e)) => {
+                tracing::warn!("trace calc_stats 失败: {}", e);
+                let count = total;
+                (
+                    records,
+                    count,
+                    TraceQueryStats {
+                        matched_count: count,
+                        ..Default::default()
+                    },
+                )
+            }
+            (Err(e), _) => {
+                tracing::warn!("trace query 失败: {}", e);
+                (Vec::new(), 0, TraceQueryStats::default())
+            }
+        }
+    }
+
+    /// 重新计算汇总统计
+    pub fn get_stats(&self, q: &TraceQuery, cost_per_credit: f64) -> TraceQueryStats {
+        let conn = self.conn.lock();
+        Self::calc_stats_inner(&conn, q, cost_per_credit).unwrap_or_default()
     }
 
     /// 测试辅助：仅取记录、忽略总数
@@ -561,6 +613,14 @@ impl TraceStore {
             clauses.push("client_ip = ?".to_string());
             params.push(Box::new(ip.clone()));
         }
+        if let Some(user) = &q.downstream_user {
+            clauses.push(
+                "EXISTS (SELECT 1 FROM newapi_log_cache n \
+                 WHERE n.trace_id = traces.trace_id AND n.username = ?)"
+                    .to_string(),
+            );
+            params.push(Box::new(user.clone()));
+        }
         // 时间窗口：与 ts_epoch 同为 Unix 秒，命中 idx_traces_ts(ts_epoch DESC)
         if let Some(start) = q.start_ts {
             clauses.push("ts_epoch >= ?".to_string());
@@ -579,10 +639,11 @@ impl TraceStore {
                 "(model LIKE ? ESCAPE '\\' OR trace_id LIKE ? ESCAPE '\\' \
                  OR IFNULL(error_message, '') LIKE ? ESCAPE '\\' \
                  OR IFNULL(session_id, '') LIKE ? ESCAPE '\\' \
-                 OR IFNULL(client_ip, '') LIKE ? ESCAPE '\\')"
+                 OR IFNULL(client_ip, '') LIKE ? ESCAPE '\\' \
+                 OR EXISTS (SELECT 1 FROM newapi_log_cache n WHERE n.trace_id = traces.trace_id AND (n.username LIKE ? ESCAPE '\\' OR n.token_name LIKE ? ESCAPE '\\')))"
                     .to_string(),
             );
-            for _ in 0..5 {
+            for _ in 0..7 {
                 params.push(Box::new(pattern.clone()));
             }
         }
@@ -671,6 +732,51 @@ impl TraceStore {
             rec.attempts = attempts.collect::<rusqlite::Result<_>>()?;
         }
         Ok((records, total as usize))
+    }
+
+    fn calc_stats_inner(
+        conn: &Connection,
+        q: &TraceQuery,
+        cost_per_credit: f64,
+    ) -> rusqlite::Result<TraceQueryStats> {
+        let (where_sql, params) = Self::build_where(q);
+        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|b| b.as_ref()).collect();
+
+        let count_credits_sql = format!(
+            "SELECT COUNT(*), IFNULL(SUM(credits), 0.0) FROM traces {}",
+            where_sql
+        );
+        let (matched_count, total_credits): (i64, f64) = conn.query_row(
+            &count_credits_sql,
+            param_refs.as_slice(),
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+
+        let (total_revenue, total_quota): (f64, i64) = if matched_count > 0 {
+            let rev_sql = format!(
+                "SELECT IFNULL(SUM(n.user_amount), 0.0), IFNULL(SUM(n.quota), 0) \
+                 FROM newapi_log_cache n \
+                 WHERE n.status = 'found' AND n.trace_id IN (SELECT trace_id FROM traces {})",
+                where_sql
+            );
+            conn.query_row(&rev_sql, param_refs.as_slice(), |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })?
+        } else {
+            (0.0, 0)
+        };
+
+        let total_cost = total_credits * cost_per_credit;
+        let total_profit = total_revenue - total_cost;
+
+        Ok(TraceQueryStats {
+            total_credits,
+            total_revenue,
+            total_cost,
+            total_profit,
+            total_quota,
+            matched_count: matched_count as usize,
+        })
     }
 
     /// 删除超过保留期的记录（traces + 关联 attempts）。仅 warn 失败。
@@ -868,6 +974,30 @@ impl TraceStore {
             tracing::warn!("save_newapi_cache_batch commit failed: {}", e);
         }
     }
+
+    /// 列出所有已缓存的下游用户名（去重，升序）
+    pub fn list_cached_downstream_users(&self) -> Vec<String> {
+        let conn = self.conn.lock();
+        let mut stmt = match conn.prepare(
+            "SELECT DISTINCT username FROM newapi_log_cache \
+             WHERE username IS NOT NULL AND username != '' \
+             ORDER BY username COLLATE NOCASE ASC",
+        ) {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!("list_cached_downstream_users prepare 失败: {}", e);
+                return Vec::new();
+            }
+        };
+        let rows = match stmt.query_map([], |row| row.get::<_, String>(0)) {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!("list_cached_downstream_users 查询失败: {}", e);
+                return Vec::new();
+            }
+        };
+        rows.filter_map(|r| r.ok()).collect()
+    }
 }
 
 /// 按凭据的失败分类计数（鉴权 / 账号风控 / 其他）
@@ -953,6 +1083,7 @@ CREATE TABLE IF NOT EXISTS newapi_log_cache (
     status        TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_newapi_cache_queried_at ON newapi_log_cache(queried_at);
+CREATE INDEX IF NOT EXISTS idx_newapi_cache_username ON newapi_log_cache(username);
 ";
 
 #[cfg(test)]

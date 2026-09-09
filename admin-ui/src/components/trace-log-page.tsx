@@ -15,7 +15,13 @@ import {
   Info,
   ArrowLeftRight,
   Globe,
+  Coins,
+  DollarSign,
+  TrendingUp,
+  TrendingDown,
+  Wallet,
 } from 'lucide-react'
+import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import {
@@ -359,7 +365,13 @@ function TokensCell({ rec }: { rec: TraceRecord }) {
 }
 
 /** 费用与盈亏单元格（换行显示，红盈绿亏，hover 查看详细核算） */
-function CostCell({ rec }: { rec: TraceRecord }) {
+function CostCell({
+  rec,
+  onFilterDownstreamUser,
+}: {
+  rec: TraceRecord
+  onFilterDownstreamUser?: (user: string) => void
+}) {
   const credits = rec.credits ?? 0
   const hasCredits = credits > 0
   const profit = rec.downstreamProfit
@@ -454,7 +466,22 @@ function CostCell({ rec }: { rec: TraceRecord }) {
             <div className="flex items-center justify-between gap-4 pt-0.5 text-[11px] text-gray-400">
               <span className="font-sans">下游用户</span>
               <span className="font-mono text-gray-300 truncate max-w-[140px]">
-                {rec.downstreamUsername || '-'}{rec.downstreamTokenName ? ` / ${rec.downstreamTokenName}` : ''}
+                {rec.downstreamUsername ? (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onFilterDownstreamUser?.(rec.downstreamUsername!)
+                    }}
+                    title={`点击过滤下游用户: ${rec.downstreamUsername}`}
+                    className="hover:text-sky-300 hover:underline cursor-pointer transition-colors text-left"
+                  >
+                    {rec.downstreamUsername}
+                  </button>
+                ) : (
+                  '-'
+                )}
+                {rec.downstreamTokenName ? ` / ${rec.downstreamTokenName}` : ''}
               </span>
             </div>
           )}
@@ -595,6 +622,7 @@ const URL_DEFAULTS = {
   errorType: '',
   keyId: '',
   group: '',
+  downstreamUser: '',
   q: '',
   session: '',
   switched: '',
@@ -644,9 +672,11 @@ function useSlashFocus(ref: React.RefObject<HTMLInputElement | null>) {
 function useTraceColumns({
   onFilterSession,
   onFilterIp,
+  onFilterDownstreamUser,
 }: {
   onFilterSession?: (sessionId: string) => void
   onFilterIp?: (ip: string) => void
+  onFilterDownstreamUser?: (user: string) => void
 } = {}): ConsoleColumn<TraceRecord>[] {
   return useMemo(
     () => [
@@ -695,7 +725,7 @@ function useTraceColumns({
       {
         id: 'credits',
         header: '费用',
-        cell: (r) => <CostCell rec={r} />,
+        cell: (r) => <CostCell rec={r} onFilterDownstreamUser={onFilterDownstreamUser} />,
       },
       {
         id: 'latency',
@@ -718,6 +748,29 @@ function useTraceColumns({
             {keyLabel(r.keyId, r.keyName)}
           </span>
         ),
+      },
+
+      {
+        id: 'downstreamUser',
+        header: '下游用户',
+        optional: true,
+        hint: '下游 NewAPI 用户名，点击可快速筛选',
+        cell: (r) =>
+          r.downstreamUsername ? (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation()
+                onFilterDownstreamUser?.(r.downstreamUsername!)
+              }}
+              title={`点击过滤下游用户: ${r.downstreamUsername}`}
+              className="text-xs font-mono text-muted-foreground hover:text-foreground transition-colors cursor-pointer truncate max-w-[120px]"
+            >
+              {r.downstreamUsername}
+            </button>
+          ) : (
+            <span className="text-xs text-muted-foreground/50 font-mono">-</span>
+          ),
       },
 
       {
@@ -765,7 +818,7 @@ function useTraceColumns({
           ),
       },
     ],
-    [onFilterSession, onFilterIp],
+    [onFilterSession, onFilterIp, onFilterDownstreamUser],
   )
 }
 
@@ -836,6 +889,7 @@ export function TraceLogPage() {
     errorType: url.errorType || undefined,
     keyId: url.keyId ? Number(url.keyId) : undefined,
     group: url.group || undefined,
+    downstreamUser: url.downstreamUser || undefined,
     q: url.q || undefined,
     sessionId: url.session || undefined,
     onlySwitched: url.switched === '1' || undefined,
@@ -848,10 +902,33 @@ export function TraceLogPage() {
   const { data, isLoading, isFetching, refetch } = useTraces(query)
   const records = data?.records ?? []
   const total = data?.total ?? 0
+  const stats = data?.stats ?? {
+    totalCredits: 0,
+    totalRevenue: 0,
+    totalCost: 0,
+    totalProfit: 0,
+    totalQuota: 0,
+    matchedCount: total,
+  }
   const totalPages = Math.max(1, Math.ceil(total / pageSize))
   const filterSession = (sessionId: string) => patchUrl({ session: sessionId, page: '0' })
   const filterIp = (ip: string) => patchUrl({ ip, page: '0' })
-  const columns = useTraceColumns({ onFilterSession: filterSession, onFilterIp: filterIp })
+  const filterDownstreamUser = (user: string) => patchUrl({ downstreamUser: user, page: '0' })
+  const columns = useTraceColumns({
+    onFilterSession: filterSession,
+    onFilterIp: filterIp,
+    onFilterDownstreamUser: filterDownstreamUser,
+  })
+
+  const downstreamUserOptions = useMemo(() => {
+    const users = data?.downstreamUsers ?? []
+    const set = new Set(users)
+    if (url.downstreamUser) set.add(url.downstreamUser)
+    return [
+      { value: '', label: '全部下游用户' },
+      ...Array.from(set).map((u) => ({ value: u, label: u })),
+    ]
+  }, [data?.downstreamUsers, url.downstreamUser])
 
   const isTimeFiltered = Boolean(
     url.start ||
@@ -866,6 +943,7 @@ export function TraceLogPage() {
     url.errorType,
     url.keyId,
     url.group,
+    url.downstreamUser,
     url.q,
     url.session,
     url.switched,
@@ -875,6 +953,7 @@ export function TraceLogPage() {
 
 const TRACE_NAV_ITEMS: NavSectionItem[] = [
   { id: 'traces-header', title: '日志概览' },
+  { id: 'traces-stats', title: '指标统计' },
   { id: 'traces-filter', title: '多维筛选' },
   { id: 'traces-table', title: '链路追踪表' },
 ]
@@ -926,6 +1005,136 @@ const TRACE_NAV_ITEMS: NavSectionItem[] = [
       />
       </div>
 
+      {/* 统计指标汇总栏 */}
+      <div id="traces-stats" className="grid grid-cols-2 gap-3 max-[480px]:grid-cols-1 lg:grid-cols-4">
+        {/* 1. 消耗积分 */}
+        <Card className="border border-border/70 bg-card transition-all duration-200 hover:border-primary/40 hover:shadow-xs">
+          <CardContent className="p-3.5 sm:p-4">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-muted-foreground">消耗积分</span>
+              <div className="flex h-7 w-7 items-center justify-center rounded-md bg-primary/10 text-primary">
+                <Coins className="h-4 w-4" />
+              </div>
+            </div>
+            <div className="mt-2 flex items-baseline justify-between gap-1">
+              <span className="font-mono text-xl sm:text-2xl font-bold tracking-tight text-foreground tabular-nums">
+                {stats.totalCredits.toFixed(4)}
+              </span>
+              <span className="text-[11px] text-muted-foreground font-mono">credits</span>
+            </div>
+            <div className="mt-2 flex items-center justify-between text-[11px] text-muted-foreground/80 border-t border-border/40 pt-2 font-mono">
+              <span>匹配请求</span>
+              <span className="font-semibold text-foreground">{stats.matchedCount.toLocaleString()} 次</span>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* 2. 下游收费总金额 */}
+        <Card className="border border-border/70 bg-card transition-all duration-200 hover:border-sky-500/40 hover:shadow-xs">
+          <CardContent className="p-3.5 sm:p-4">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-muted-foreground">下游收费总金额</span>
+              <div className="flex h-7 w-7 items-center justify-center rounded-md bg-sky-500/10 text-sky-500">
+                <DollarSign className="h-4 w-4" />
+              </div>
+            </div>
+            <div className="mt-2 flex items-baseline justify-between gap-1">
+              <span className="font-mono text-xl sm:text-2xl font-bold tracking-tight text-sky-600 dark:text-sky-400 tabular-nums">
+                ${stats.totalRevenue.toFixed(4)}
+              </span>
+              <span className="text-[11px] text-muted-foreground font-mono">USD</span>
+            </div>
+            <div className="mt-2 flex items-center justify-between text-[11px] text-muted-foreground/80 border-t border-border/40 pt-2 font-mono">
+              <span>消耗额度</span>
+              <span className="font-semibold text-foreground">{stats.totalQuota.toLocaleString()}</span>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* 3. 采购总成本 */}
+        <Card className="border border-border/70 bg-card transition-all duration-200 hover:border-amber-500/40 hover:shadow-xs">
+          <CardContent className="p-3.5 sm:p-4">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-muted-foreground">采购总成本</span>
+              <div className="flex h-7 w-7 items-center justify-center rounded-md bg-amber-500/10 text-amber-500">
+                <Wallet className="h-4 w-4" />
+              </div>
+            </div>
+            <div className="mt-2 flex items-baseline justify-between gap-1">
+              <span className="font-mono text-xl sm:text-2xl font-bold tracking-tight text-amber-600 dark:text-amber-400 tabular-nums">
+                ${stats.totalCost.toFixed(4)}
+              </span>
+              <span className="text-[11px] text-muted-foreground font-mono">USD</span>
+            </div>
+            <div className="mt-2 flex items-center justify-between text-[11px] text-muted-foreground/80 border-t border-border/40 pt-2 font-mono">
+              <span>折算单价</span>
+              <span className="font-semibold text-foreground">
+                ${stats.totalCredits > 0 ? (stats.totalCost / stats.totalCredits).toFixed(6) : '0.000000'} / 分
+              </span>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* 4. 净盈亏（红盈绿亏） */}
+        <Card className="border border-border/70 bg-card transition-all duration-200 hover:border-border hover:shadow-xs">
+          <CardContent className="p-3.5 sm:p-4">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-muted-foreground">核算净盈亏</span>
+              <div
+                className={cn(
+                  'flex h-7 w-7 items-center justify-center rounded-md',
+                  stats.totalProfit > 0
+                    ? 'bg-rose-500/10 text-rose-600 dark:text-rose-400'
+                    : stats.totalProfit < 0
+                      ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+                      : 'bg-muted text-muted-foreground',
+                )}
+              >
+                {stats.totalProfit >= 0 ? (
+                  <TrendingUp className="h-4 w-4" />
+                ) : (
+                  <TrendingDown className="h-4 w-4" />
+                )}
+              </div>
+            </div>
+            <div className="mt-2 flex items-baseline justify-between gap-1">
+              <span
+                className={cn(
+                  'font-mono text-xl sm:text-2xl font-bold tracking-tight tabular-nums',
+                  stats.totalProfit > 0
+                    ? 'text-rose-600 dark:text-rose-400'
+                    : stats.totalProfit < 0
+                      ? 'text-emerald-600 dark:text-emerald-400'
+                      : 'text-foreground',
+                )}
+              >
+                {stats.totalProfit > 0 ? '+' : stats.totalProfit < 0 ? '-' : ''}
+                ${Math.abs(stats.totalProfit).toFixed(4)}
+              </span>
+              <Badge
+                variant="outline"
+                className={cn(
+                  'font-mono text-[10px] py-0 px-1.5 h-4',
+                  stats.totalProfit > 0
+                    ? 'border-rose-500/40 text-rose-600 dark:text-rose-400 bg-rose-500/10'
+                    : stats.totalProfit < 0
+                      ? 'border-emerald-500/40 text-emerald-600 dark:text-emerald-400 bg-emerald-500/10'
+                      : 'text-muted-foreground',
+                )}
+              >
+                {stats.totalProfit > 0 ? '盈利' : stats.totalProfit < 0 ? '亏损' : '持平'}
+              </Badge>
+            </div>
+            <div className="mt-2 flex items-center justify-between text-[11px] text-muted-foreground/80 border-t border-border/40 pt-2 font-mono">
+              <span>核算状态</span>
+              <span className="font-semibold text-foreground">
+                {stats.totalRevenue > 0 || stats.totalCost > 0 ? '已核算' : '无下游数据'}
+              </span>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
       {/* 筛选栏：时间范围在最前，因为排查的第一句话通常是"刚才那几分钟" */}
       <div id="traces-filter" className="flex flex-wrap items-center gap-2">
         <TimeRangePicker
@@ -971,7 +1180,7 @@ const TRACE_NAV_ITEMS: NavSectionItem[] = [
                 e.currentTarget.blur()
               }
             }}
-            placeholder="搜索模型 / 报错 / Trace ID / 会话 / IP"
+            placeholder="搜索模型 / 报错 / Trace ID / 会话 / IP / 下游用户"
             aria-label="搜索日志"
             className="console-num h-8 w-[min(15rem,52vw)] rounded-md border border-border bg-card pl-8 pr-7 text-xs placeholder:font-sans placeholder:text-muted-foreground/60 focus-visible:border-primary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
           />
@@ -1006,6 +1215,11 @@ const TRACE_NAV_ITEMS: NavSectionItem[] = [
           onChange={(v) => patchUrl({ group: v, page: '0' })}
           options={groupSelectOptions}
         />
+        <Select
+          value={url.downstreamUser}
+          onChange={(v) => patchUrl({ downstreamUser: v, page: '0' })}
+          options={downstreamUserOptions}
+        />
         <Button
           size="sm"
           variant={url.switched === '1' ? 'default' : 'outline'}
@@ -1016,6 +1230,22 @@ const TRACE_NAV_ITEMS: NavSectionItem[] = [
           <ArrowLeftRight className="h-3.5 w-3.5" />
           仅换号
         </Button>
+        {url.downstreamUser && (
+          <span className="inline-flex h-8 items-center gap-1.5 rounded-md border border-primary/40 bg-primary/10 pl-2.5 pr-1.5 text-xs">
+            <span className="text-muted-foreground">下游用户</span>
+            <span className="console-num font-medium" title={url.downstreamUser}>
+              {url.downstreamUser}
+            </span>
+            <button
+              type="button"
+              onClick={() => patchUrl({ downstreamUser: '', page: '0' })}
+              title="取消下游用户筛选"
+              className="flex h-4 w-4 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </span>
+        )}
         {url.session && (
           <span className="inline-flex h-8 items-center gap-1.5 rounded-md border border-primary/40 bg-primary/10 pl-2.5 pr-1.5 text-xs">
             <span className="text-muted-foreground">会话</span>

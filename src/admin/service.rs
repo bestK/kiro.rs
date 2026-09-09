@@ -3080,6 +3080,7 @@ impl AdminService {
     }
 
     /// 获取下游 NewAPI 配置（RwLock 句柄，可跨线程安全读取）
+    #[allow(dead_code)]
     pub fn downstream_newapi(&self) -> Arc<parking_lot::RwLock<crate::model::downstream_newapi::DownstreamNewApiConfig>> {
         Arc::clone(&self.downstream_newapi)
     }

@@ -81,13 +81,20 @@ export function CreditPriceInput({
   }
 
   const parsedNum = Number(draft)
+  const hasPrice = draft.trim() !== '' && Number.isFinite(parsedNum) && parsedNum >= 0
+  // 拆成 label + value 两段，便于把换算后的单价也用金色高亮
+  let conversionLabel = ''
+  let conversionValue = ''
   let conversionPreview: string | null = null
-  if (draft.trim() !== '' && Number.isFinite(parsedNum) && parsedNum >= 0) {
+  if (hasPrice) {
     if (unit === 'k') {
-      conversionPreview = `折合单积分价格：$${(parsedNum / 1000).toFixed(6)} / 积分`
+      conversionLabel = '折合单积分价格：'
+      conversionValue = `$${(parsedNum / 1000).toFixed(6)} / 积分`
     } else {
-      conversionPreview = `折合每千分价格：$${(parsedNum * 1000).toFixed(4)} / 千分`
+      conversionLabel = '折合每千分价格：'
+      conversionValue = `$${(parsedNum * 1000).toFixed(4)} / 千分`
     }
+    conversionPreview = conversionLabel + conversionValue
   } else if (allowClear) {
     conversionPreview = '留空则继承上一级（分组或全局）单价'
   }
@@ -149,7 +156,10 @@ export function CreditPriceInput({
         </div>
       </div>
 
-      {/* 数值输入框 */}
+      {/*
+        数值输入框。单价是这个表单最关键的数字：放大字号 + 富贵金色突出。
+        不加粗 —— 加粗会让数字发虚，靠字号与色彩拉对比即可。
+      */}
       <div className="relative flex items-center">
         <Input
           type="number"
@@ -162,9 +172,9 @@ export function CreditPriceInput({
             (unit === 'k' ? '例如 80 (留空继承全局)' : '例如 0.08 (留空继承全局)')
           }
           disabled={disabled}
-          className="pr-20 font-mono text-xs"
+          className="h-10 pr-24 font-mono text-base font-medium tabular-nums text-amber-600 dark:text-amber-400 placeholder:text-sm placeholder:font-normal placeholder:text-muted-foreground"
         />
-        <span className="pointer-events-none absolute right-2.5 text-[11px] text-muted-foreground">
+        <span className="pointer-events-none absolute right-2.5 text-[11px] font-medium text-amber-600/70 dark:text-amber-400/70">
           {unit === 'k' ? 'USD / 千分' : 'USD / 积分'}
         </span>
       </div>
@@ -172,7 +182,16 @@ export function CreditPriceInput({
       {/* 实时换算与说明 */}
       {conversionPreview && (
         <p className="text-[11px] text-muted-foreground font-mono">
-          {conversionPreview}
+          {hasPrice ? (
+            <>
+              {conversionLabel}
+              <span className="text-xs font-medium text-amber-600 dark:text-amber-400 tabular-nums">
+                {conversionValue}
+              </span>
+            </>
+          ) : (
+            conversionPreview
+          )}
         </p>
       )}
 

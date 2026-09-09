@@ -56,6 +56,19 @@ import {
 } from '@/components/console/time-range'
 import type { TraceQuery, TraceRecord } from '@/types/api'
 
+/**
+ * 盈亏「持平」判定阈值。与展示精度（4 位小数）对齐：
+ * 任何显示为 $0.0000 的微小差额都应判为持平，否则会出现 "+$0.0000 盈" 的自相矛盾展示。
+ */
+const FLAT_EPSILON = 0.00005
+
+/** 盈亏三态判定，供明细单元格与汇总卡片共用，避免两处阈值不一致 */
+function profitState(profit: number | null | undefined): 'profit' | 'loss' | 'flat' | 'none' {
+  if (profit == null) return 'none'
+  if (Math.abs(profit) < FLAT_EPSILON) return 'flat'
+  return profit > 0 ? 'profit' : 'loss'
+}
+
 /** 失败分类 → 标签 */
 function outcomeStyle(outcome: string): { label: string } {
   switch (outcome) {
@@ -384,9 +397,11 @@ function CostCell({
     return <span className="text-xs text-muted-foreground font-mono">-</span>
   }
 
-  // 红盈绿亏：盈利为正显示红色，亏损为负显示绿色，零为中性灰色
-  const isProfit = profit != null && profit > 0
-  const isLoss = profit != null && profit < 0
+  // 红盈绿亏：盈利为正显示红色，亏损为负显示绿色，持平为中性灰色
+  const state = profitState(profit)
+  const isFlat = state === 'flat'
+  const isProfit = state === 'profit'
+  const isLoss = state === 'loss'
   const profitColor = isProfit
     ? 'text-rose-600 dark:text-rose-400'
     : isLoss
@@ -394,7 +409,9 @@ function CostCell({
       : 'text-muted-foreground'
 
   const profitSign = isProfit ? '+' : isLoss ? '-' : ''
-  const profitText = profit != null ? `${profitSign}$${Math.abs(profit).toFixed(4)}` : null
+  // 持平时只显示「平」，不再叠加 $0.0000 这种无意义的金额
+  const profitText = profit == null ? null : isFlat ? null : `${profitSign}$${Math.abs(profit).toFixed(4)}`
+  const hasProfitCell = profit != null
 
   const content = (
     <div className="space-y-0.5 font-mono">
@@ -406,16 +423,16 @@ function CostCell({
       </div>
 
       {/* 第二行：newapi收费金额小些，盈亏放到金额后面（不加粗保持清晰锐利） */}
-      {revenue != null || profitText ? (
+      {revenue != null || hasProfitCell ? (
         <div className="flex items-center gap-1.5 text-[11px] tabular-nums leading-tight cursor-help">
           {revenue != null && (
             <span className="text-muted-foreground font-normal">
               ${revenue.toFixed(4)}
             </span>
           )}
-          {profitText && (
+          {hasProfitCell && (
             <span className={cn('font-normal flex items-center gap-0.5', profitColor)}>
-              <span>{profitText}</span>
+              {profitText && <span>{profitText}</span>}
               <span className="text-[10px] opacity-85">{isProfit ? '盈' : isLoss ? '亏' : '平'}</span>
             </span>
           )}
@@ -467,7 +484,7 @@ function CostCell({
             <div className="flex items-center justify-between gap-4 border-t border-gray-700 pt-1.5 font-mono">
               <span className="text-gray-400 font-sans">净盈亏</span>
               <span className={cn('font-medium', profitColor)}>
-                {profitText} ({isProfit ? '盈利' : isLoss ? '亏损' : '持平'})
+                {isFlat ? '持平' : `${profitText} (${isProfit ? '盈利' : '亏损'})`}
               </span>
             </div>
           )}
@@ -919,6 +936,8 @@ export function TraceLogPage() {
     totalQuota: 0,
     matchedCount: total,
   }
+  // 汇总盈亏三态：与明细单元格共用同一阈值，避免"明细全是平、汇总却显示盈利"
+  const totalProfitState = profitState(stats.totalProfit)
   const totalPages = Math.max(1, Math.ceil(total / pageSize))
   const filterSession = (sessionId: string) => patchUrl({ session: sessionId, page: '0' })
   const filterIp = (ip: string) => patchUrl({ ip, page: '0' })
@@ -1092,17 +1111,17 @@ const TRACE_NAV_ITEMS: NavSectionItem[] = [
               <div
                 className={cn(
                   'flex h-7 w-7 items-center justify-center rounded-md',
-                  stats.totalProfit > 0
+                  totalProfitState === 'profit'
                     ? 'bg-rose-500/10 text-rose-600 dark:text-rose-400'
-                    : stats.totalProfit < 0
+                    : totalProfitState === 'loss'
                       ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
                       : 'bg-muted text-muted-foreground',
                 )}
               >
-                {stats.totalProfit >= 0 ? (
-                  <TrendingUp className="h-4 w-4" />
-                ) : (
+                {totalProfitState === 'loss' ? (
                   <TrendingDown className="h-4 w-4" />
+                ) : (
+                  <TrendingUp className="h-4 w-4" />
                 )}
               </div>
             </div>
@@ -1110,28 +1129,34 @@ const TRACE_NAV_ITEMS: NavSectionItem[] = [
               <span
                 className={cn(
                   'font-mono text-xl sm:text-2xl font-bold tracking-tight tabular-nums',
-                  stats.totalProfit > 0
+                  totalProfitState === 'profit'
                     ? 'text-rose-600 dark:text-rose-400'
-                    : stats.totalProfit < 0
+                    : totalProfitState === 'loss'
                       ? 'text-emerald-600 dark:text-emerald-400'
                       : 'text-foreground',
                 )}
               >
-                {stats.totalProfit > 0 ? '+' : stats.totalProfit < 0 ? '-' : ''}
-                ${Math.abs(stats.totalProfit).toFixed(4)}
+                {totalProfitState === 'flat' ? (
+                  '持平'
+                ) : (
+                  <>
+                    {totalProfitState === 'profit' ? '+' : '-'}
+                    ${Math.abs(stats.totalProfit).toFixed(4)}
+                  </>
+                )}
               </span>
               <Badge
                 variant="outline"
                 className={cn(
                   'font-mono text-[10px] py-0 px-1.5 h-4',
-                  stats.totalProfit > 0
+                  totalProfitState === 'profit'
                     ? 'border-rose-500/40 text-rose-600 dark:text-rose-400 bg-rose-500/10'
-                    : stats.totalProfit < 0
+                    : totalProfitState === 'loss'
                       ? 'border-emerald-500/40 text-emerald-600 dark:text-emerald-400 bg-emerald-500/10'
                       : 'text-muted-foreground',
                 )}
               >
-                {stats.totalProfit > 0 ? '盈利' : stats.totalProfit < 0 ? '亏损' : '持平'}
+                {totalProfitState === 'profit' ? '盈利' : totalProfitState === 'loss' ? '亏损' : '持平'}
               </Badge>
             </div>
             <div className="mt-2 flex items-center justify-between text-[11px] text-muted-foreground border-t border-border pt-2 font-mono">

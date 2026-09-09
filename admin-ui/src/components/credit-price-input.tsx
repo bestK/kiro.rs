@@ -1,7 +1,10 @@
 import { useState } from 'react'
+import { Calculator, ChevronDown } from 'lucide-react'
+import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
+import { DownstreamRatioBalancer } from '@/components/downstream-ratio-balancer'
 
 export interface CreditPriceInputProps {
   /** 存储的单积分价格（USD / 积分），如 "0.002" 或 "" */
@@ -36,6 +39,7 @@ export function CreditPriceInput({
   const [unit, setUnit] = useState<'k' | 'single'>('k')
   const [draft, setDraft] = useState(() => toDisplay(value, 'k'))
   const [lastExternalVal, setLastExternalVal] = useState(value)
+  const [showBalancer, setShowBalancer] = useState(false)
 
   // 外部 value 变更时同步
   if (value !== lastExternalVal) {
@@ -170,6 +174,45 @@ export function CreditPriceInput({
         <p className="text-[11px] text-muted-foreground font-mono">
           {conversionPreview}
         </p>
+      )}
+
+      {/* 下游倍率自动配平助手展开按钮 */}
+      <div className="pt-0.5">
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => setShowBalancer((prev) => !prev)}
+          className="inline-flex items-center gap-1.5 text-[11px] font-medium text-primary hover:text-primary/80 transition-colors"
+        >
+          <Calculator className="h-3 w-3" />
+          <span>下游倍率配平助手</span>
+          <span className="text-[10px] text-muted-foreground font-normal">
+            (输入期望实收与倍率自动配平)
+          </span>
+          <ChevronDown
+            className={cn(
+              'h-3 w-3 transition-transform duration-200 text-muted-foreground',
+              showBalancer && 'rotate-180 text-primary'
+            )}
+          />
+        </button>
+      </div>
+
+      {/* 展开的配平助手 */}
+      {showBalancer && (
+        <DownstreamRatioBalancer
+          compact
+          currentUnit={unit}
+          onApply={(singleVal, kVal) => {
+            if (unit === 'k') {
+              setDraft(String(kVal))
+            } else {
+              setDraft(String(singleVal))
+            }
+            onChange(String(singleVal))
+            toast.success(`已应用配平单价: $${kVal}/千分 ($${singleVal}/积分)`)
+          }}
+        />
       )}
     </div>
   )

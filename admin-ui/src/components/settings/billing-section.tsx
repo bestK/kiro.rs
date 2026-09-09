@@ -52,6 +52,7 @@ import { ProfitCalculator } from '@/components/settings/profit-calculator'
 import { BillingRatioSimulator } from '@/components/settings/billing-ratio-simulator'
 import { DownstreamNewApiConfigCard } from '@/components/settings/downstream-newapi-config'
 import { FloatingSectionNav, type NavSectionItem } from '@/components/console/floating-section-nav'
+import { DownstreamRatioBalancer } from '@/components/downstream-ratio-balancer'
 
 const BILLING_NAV_ITEMS: NavSectionItem[] = [
   { id: 'section-billing-global', title: '全局折算设置' },
@@ -79,6 +80,8 @@ function BillingCreditPriceRow({
   disabled?: boolean
 }) {
   const [unit, setUnit] = useState<'k' | 'single'>('k')
+
+  const [showBalancer, setShowBalancer] = useState(false)
 
   const toDisplay = (val: number, u: 'k' | 'single') => {
     return u === 'k' ? +(val * 1000).toFixed(4) : val
@@ -124,112 +127,153 @@ function BillingCreditPriceRow({
     <SettingRow
       label={unit === 'k' ? '基准千分单价' : '基准单积分单价'}
       hint={
-        <span>
-          {unit === 'k' ? (
-            <>
-              下游常用的千分计费标准。当前折合{' '}
-              <strong className="text-foreground font-mono">
-                ${creditPrice} / 积分
-              </strong>
-              。例如 New API 默认 $2.00 / 千分（即 1 积分 = $0.002）。
-            </>
-          ) : (
-            <>
-              下游系统中 1 积分对应的金额价值。当前折合{' '}
-              <strong className="text-foreground font-mono">
-                ${+(creditPrice * 1000).toFixed(4)} / 千分
-              </strong>
-              。例如 New API 默认 $0.002 / 积分。
-            </>
-          )}
-        </span>
+        <div className="space-y-1">
+          <div>
+            {unit === 'k' ? (
+              <>
+                下游常用的千分计费标准。当前折合{' '}
+                <strong className="text-foreground font-mono">
+                  ${creditPrice} / 积分
+                </strong>
+                。例如 New API 默认 $2.00 / 千分（即 1 积分 = $0.002）。
+              </>
+            ) : (
+              <>
+                下游系统中 1 积分对应的金额价值。当前折合{' '}
+                <strong className="text-foreground font-mono">
+                  ${+(creditPrice * 1000).toFixed(4)} / 千分
+                </strong>
+                。例如 New API 默认 $0.002 / 积分。
+              </>
+            )}
+          </div>
+          <div>
+            <button
+              type="button"
+              disabled={disabled || pending}
+              onClick={() => setShowBalancer((prev) => !prev)}
+              className="inline-flex items-center gap-1.5 text-xs text-primary hover:underline transition-colors font-medium mt-0.5"
+            >
+              <Calculator className="h-3.5 w-3.5" />
+              <span>下游倍率配平助手</span>
+              <span className="text-[10px] text-muted-foreground font-normal">
+                (输入期望实收与倍率自动反推)
+              </span>
+              <ChevronDown
+                className={cn(
+                  'h-3 w-3 transition-transform duration-200 text-muted-foreground',
+                  showBalancer && 'rotate-180 text-primary'
+                )}
+              />
+            </button>
+          </div>
+        </div>
       }
       pending={pending}
       saved={saved}
     >
-      <div className="flex flex-wrap items-center gap-2">
-        {/* 单位切换 */}
-        <div className="inline-flex h-7 items-center rounded-md border border-border bg-secondary/50 p-0.5">
-          <button
-            type="button"
-            disabled={disabled || pending}
-            onClick={() => {
-              setUnit('k')
-              setDraft(String(toDisplay(creditPrice, 'k')))
-            }}
-            className={cn(
-              'inline-flex h-6 items-center rounded px-2 text-xs font-medium transition-colors',
-              unit === 'k'
-                ? 'bg-card text-foreground shadow-xs border border-border/80'
-                : 'text-muted-foreground hover:text-foreground border border-transparent'
-            )}
-          >
-            $/千分 (推荐)
-          </button>
-          <button
-            type="button"
-            disabled={disabled || pending}
-            onClick={() => {
-              setUnit('single')
-              setDraft(String(toDisplay(creditPrice, 'single')))
-            }}
-            className={cn(
-              'inline-flex h-6 items-center rounded px-2 text-xs font-medium transition-colors',
-              unit === 'single'
-                ? 'bg-card text-foreground shadow-xs border border-border/80'
-                : 'text-muted-foreground hover:text-foreground border border-transparent'
-            )}
-          >
-            $/积分
-          </button>
-        </div>
-
-        {/* 快捷预设 */}
-        <div className="flex items-center gap-1">
-          {presets.map((p) => (
-            <Button
-              key={p}
+      <div className="flex flex-col items-end gap-2 w-full sm:w-auto">
+        <div className="flex flex-wrap items-center gap-2 justify-end">
+          {/* 单位切换 */}
+          <div className="inline-flex h-7 items-center rounded-md border border-border bg-secondary/50 p-0.5">
+            <button
               type="button"
-              size="sm"
-              variant={currentDisplayNum === p ? 'default' : 'outline'}
-              className="h-7 px-2 text-xs font-mono"
               disabled={disabled || pending}
-              onClick={() => handlePreset(p)}
+              onClick={() => {
+                setUnit('k')
+                setDraft(String(toDisplay(creditPrice, 'k')))
+              }}
+              className={cn(
+                'inline-flex h-6 items-center rounded px-2 text-xs font-medium transition-colors',
+                unit === 'k'
+                  ? 'bg-card text-foreground shadow-xs border border-border/80'
+                  : 'text-muted-foreground hover:text-foreground border border-transparent'
+              )}
             >
-              ${p}
-            </Button>
-          ))}
-        </div>
+              $/千分 (推荐)
+            </button>
+            <button
+              type="button"
+              disabled={disabled || pending}
+              onClick={() => {
+                setUnit('single')
+                setDraft(String(toDisplay(creditPrice, 'single')))
+              }}
+              className={cn(
+                'inline-flex h-6 items-center rounded px-2 text-xs font-medium transition-colors',
+                unit === 'single'
+                  ? 'bg-card text-foreground shadow-xs border border-border/80'
+                  : 'text-muted-foreground hover:text-foreground border border-transparent'
+              )}
+            >
+              $/积分
+            </button>
+          </div>
 
-        {/* 数值输入 */}
-        <div className="flex items-center gap-1.5">
-          <Input
-            type="number"
-            step="any"
-            min={unit === 'k' ? 0.0001 : 0.000001}
-            max={unit === 'k' ? 100000 : 100}
-            value={draft}
-            disabled={disabled || pending}
-            onChange={(e) => setDraft(e.target.value)}
-            onBlur={() => commit(draft)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.currentTarget.blur()
-              } else if (e.key === 'Escape') {
-                setDraft(String(toDisplay(creditPrice, unit)))
-                e.currentTarget.blur()
-              }
-            }}
-            className={cn(
-              'console-num h-8 w-24 text-right text-[13px]',
-              invalid && 'border-destructive focus-visible:border-destructive'
-            )}
-          />
-          <span className="text-xs text-muted-foreground whitespace-nowrap">
-            {unit === 'k' ? 'USD / 千分' : 'USD / 积分'}
-          </span>
+          {/* 快捷预设 */}
+          <div className="flex items-center gap-1">
+            {presets.map((p) => (
+              <Button
+                key={p}
+                type="button"
+                size="sm"
+                variant={currentDisplayNum === p ? 'default' : 'outline'}
+                className="h-7 px-2 text-xs font-mono"
+                disabled={disabled || pending}
+                onClick={() => handlePreset(p)}
+              >
+                ${p}
+              </Button>
+            ))}
+          </div>
+
+          {/* 数值输入 */}
+          <div className="flex items-center gap-1.5">
+            <Input
+              type="number"
+              step="any"
+              min={unit === 'k' ? 0.0001 : 0.000001}
+              max={unit === 'k' ? 100000 : 100}
+              value={draft}
+              disabled={disabled || pending}
+              onChange={(e) => setDraft(e.target.value)}
+              onBlur={() => commit(draft)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.currentTarget.blur()
+                } else if (e.key === 'Escape') {
+                  setDraft(String(toDisplay(creditPrice, unit)))
+                  e.currentTarget.blur()
+                }
+              }}
+              className={cn(
+                'console-num h-8 w-24 text-right text-[13px]',
+                invalid && 'border-destructive focus-visible:border-destructive'
+              )}
+            />
+            <span className="text-xs text-muted-foreground whitespace-nowrap">
+              {unit === 'k' ? 'USD / 千分' : 'USD / 积分'}
+            </span>
+          </div>
         </div>
       </div>
+
+      {showBalancer && (
+        <div className="w-full pt-2">
+          <DownstreamRatioBalancer
+            currentUnit={unit}
+            onApply={(singlePrice, kPrice) => {
+              if (unit === 'k') {
+                setDraft(String(kPrice))
+              } else {
+                setDraft(String(singlePrice))
+              }
+              onCommit(singlePrice)
+              toast.success(`已应用全局基准单价: $${kPrice}/千分 ($${singlePrice}/积分)`)
+            }}
+          />
+        </div>
+      )}
     </SettingRow>
   )
 }
@@ -1467,7 +1511,10 @@ export function BillingSection() {
         icon={<Tag className="h-4 w-4" />}
       >
         <div className="py-2">
-          <BillingRatioSimulator currentCreditPrice={creditPrice} />
+          <BillingRatioSimulator
+            currentCreditPrice={creditPrice}
+            onApplyCreditPrice={(next) => saver.save('creditPrice', { creditPrice: next })}
+          />
         </div>
       </SettingGroup>
     </div>

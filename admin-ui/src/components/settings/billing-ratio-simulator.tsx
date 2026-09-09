@@ -12,6 +12,7 @@ import {
   FileText,
   Sliders,
   AlertCircle,
+  Calculator,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -81,12 +82,17 @@ const POPULAR_MODELS: ModelPricingSpec[] = [
 
 interface BillingRatioSimulatorProps {
   currentCreditPrice: number
+  onApplyCreditPrice?: (newPrice: number) => void
 }
 
-export function BillingRatioSimulator({ currentCreditPrice }: BillingRatioSimulatorProps) {
+export function BillingRatioSimulator({
+  currentCreditPrice,
+  onApplyCreditPrice,
+}: BillingRatioSimulatorProps) {
   // 当前模拟的倍率（例如 0.13 代表 0.13x / 1.3折）
   const [ratio, setRatio] = useState<number>(0.13)
   const [ratioInputStr, setRatioInputStr] = useState<string>('0.13')
+  const [targetRevenueStr, setTargetRevenueStr] = useState<string>('2.0')
   const [hasCopied, setHasCopied] = useState(false)
   const [showCopySection, setShowCopySection] = useState(false)
 
@@ -343,6 +349,131 @@ ${POPULAR_MODELS.map((m) => {
             </div>
           </div>
         </div>
+
+        {/* 实收目标与 Kiro 基准单价自动配平助手 */}
+        {(() => {
+          const targetRevenue = Number(targetRevenueStr)
+          const isBalancerValid =
+            Number.isFinite(targetRevenue) && targetRevenue > 0 && Number.isFinite(ratio) && ratio > 0
+          const computedKPrice = isBalancerValid ? +(targetRevenue / ratio).toFixed(4) : 0
+          const computedSinglePrice = isBalancerValid ? +(targetRevenue / (ratio * 1000)).toFixed(6) : 0
+
+          return (
+            <div className="rounded-lg border border-primary/25 bg-primary/5 p-3 space-y-2.5">
+              <div className="flex flex-wrap items-center justify-between gap-1.5">
+                <div className="flex items-center gap-1.5 font-medium text-xs text-foreground">
+                  <Calculator className="h-3.5 w-3.5 text-primary shrink-0" />
+                  <span>下游低倍率自动配平（保证您的实收利润）</span>
+                </div>
+                <Badge
+                  variant="outline"
+                  className="text-[10px] font-normal border-primary/30 text-primary bg-primary/5"
+                >
+                  实收反推 Kiro 单价
+                </Badge>
+              </div>
+
+              <p className="text-[11px] text-muted-foreground leading-relaxed">
+                下游客户偏好 <strong>{ratio}x</strong> 等低倍率展示。为了确保您每 1,000 积分实际稳收期望金额，Kiro 基准单价需按倍率反向配平：
+              </p>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                {/* 期望实收 */}
+                <div className="space-y-1 rounded-md border border-border/60 bg-background/80 p-2">
+                  <div className="flex items-center justify-between text-[11px]">
+                    <span className="font-medium text-foreground">期望每千分实收</span>
+                    <span className="text-[10px] text-muted-foreground font-mono">1,000 积分</span>
+                  </div>
+                  <div className="relative">
+                    <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-xs font-mono text-muted-foreground">
+                      $
+                    </span>
+                    <Input
+                      type="number"
+                      step="any"
+                      min="0.01"
+                      value={targetRevenueStr}
+                      onChange={(e) => setTargetRevenueStr(e.target.value)}
+                      placeholder="2.0"
+                      className="h-7 pl-5 pr-14 text-xs font-mono"
+                    />
+                    <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground">
+                      USD / 千分
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-1 pt-0.5">
+                    <span className="text-[10px] text-muted-foreground mr-0.5">预设:</span>
+                    {[1.0, 1.5, 2.0, 2.5, 3.0].map((t) => (
+                      <button
+                        key={t}
+                        type="button"
+                        onClick={() => setTargetRevenueStr(String(t))}
+                        className={cn(
+                          'h-5 px-1.5 rounded text-[10px] font-mono border transition-colors',
+                          Number(targetRevenueStr) === t
+                            ? 'bg-primary text-primary-foreground border-primary font-medium'
+                            : 'bg-background text-muted-foreground border-border hover:bg-muted hover:text-foreground'
+                        )}
+                      >
+                        ${t}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* 配平建议与一键应用 */}
+                <div className="flex flex-col justify-between rounded-md border border-primary/30 bg-background/80 p-2 space-y-1.5">
+                  <div>
+                    <div className="text-[11px] text-muted-foreground">
+                      当前 {ratio}x 下 Kiro 应填单价：
+                    </div>
+                    {isBalancerValid ? (
+                      <div className="flex items-baseline gap-1.5 mt-0.5">
+                        <span className="text-base font-bold font-mono text-primary">
+                          ${computedKPrice}
+                        </span>
+                        <span className="text-xs text-foreground font-mono">/ 千分</span>
+                        <span className="text-[10px] text-muted-foreground font-mono">
+                          (${computedSinglePrice} / 积分)
+                        </span>
+                      </div>
+                    ) : (
+                      <div className="text-[11px] text-destructive mt-1">请输入有效金额</div>
+                    )}
+                  </div>
+
+                  {onApplyCreditPrice && isBalancerValid && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={() => {
+                        onApplyCreditPrice(computedSinglePrice)
+                        toast.success(`已同步为全局基准单价: $${computedKPrice}/千分 ($${computedSinglePrice}/积分)`)
+                      }}
+                      className="h-6 px-2 text-[11px] gap-1 font-medium shadow-xs self-start"
+                    >
+                      <Sparkles className="h-3 w-3" />
+                      一键应用为此全局基准单价
+                    </Button>
+                  )}
+                </div>
+              </div>
+
+              {isBalancerValid && (
+                <div className="rounded bg-muted/40 p-2 text-[10px] text-muted-foreground font-mono leading-relaxed border border-border/40 space-y-0.5">
+                  <div>
+                    • 配平逻辑：期望实收 ${targetRevenue} ÷ 声明倍率 {ratio}x = Kiro 基准单价{' '}
+                    <span className="text-foreground font-semibold">${computedKPrice}</span> / 千分
+                  </div>
+                  <div>
+                    • 扣费闭环：买家在下游按 {ratio}x 扣费时，每消耗 1,000 积分实付 ${computedKPrice} × {ratio} ={' '}
+                    <span className="text-foreground font-semibold">${(computedKPrice * ratio).toFixed(2)}</span>，完全符合您的实收预期！
+                  </div>
+                </div>
+              )}
+            </div>
+          )
+        })()}
 
         {/* 主流模型实收价格对照表格 */}
         <div className="rounded-md border border-border/50 overflow-hidden">

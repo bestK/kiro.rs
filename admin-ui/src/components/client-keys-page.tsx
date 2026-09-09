@@ -915,7 +915,7 @@ const KEYS_NAV_ITEMS: NavSectionItem[] = [
       {/* 新建对话框 */}
       {createOpen && (
         <Dialog open={createOpen} onOpenChange={(o) => !createKey.isPending && setCreateOpen(o)}>
-          <DialogContent className="sm:max-w-md">
+          <DialogContent className="sm:max-w-md max-h-[88vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>新建客户端 Key</DialogTitle>
               <DialogDescription>
@@ -1089,7 +1089,7 @@ const KEYS_NAV_ITEMS: NavSectionItem[] = [
       {/* 编辑对话框 */}
       {editOpen && (
         <Dialog open={editOpen} onOpenChange={(o) => !updateKey.isPending && setEditOpen(o)}>
-          <DialogContent className="sm:max-w-md">
+          <DialogContent className="sm:max-w-md max-h-[88vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>编辑 Key</DialogTitle>
               <DialogDescription>修改名称与描述（不影响 Key 值与统计）</DialogDescription>

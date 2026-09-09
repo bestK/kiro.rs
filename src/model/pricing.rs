@@ -310,6 +310,18 @@ fn load_builtin_fallback_prices(map: &mut HashMap<String, ModelCost>) {
     map.insert("claude-3-haiku-20240307".to_string(), ModelCost { input: 0.25, output: 1.25 });
 }
 
+/// 真实缓存命中率 = cache_read / (uncached_input + cache_write + cache_read)。
+/// 用于约束模拟缓存拆分：真实无缓存时不编造 cache_read。
+pub fn cache_hit_ratio(uncached_input: i32, cache_write: i32, cache_read: i32) -> f64 {
+    let total = (uncached_input.max(0) as i64)
+        + (cache_write.max(0) as i64)
+        + (cache_read.max(0) as i64);
+    if total <= 0 {
+        return 0.0;
+    }
+    (cache_read.max(0) as f64) / (total as f64)
+}
+
 /// 核心倒推算法：
 /// 将本次请求消耗的 credits 折算为总目标金额 target_amount = credits * credit_price。
 /// 然后依据模型的 input 与 output 单价，反推出下游可见的 token 分布，
@@ -323,6 +335,14 @@ fn load_builtin_fallback_prices(map: &mut HashMap<String, ModelCost>) {
 /// 输入侧 token 数量不参与任何速度计算，放大它不会产生可观测的失真。
 ///
 /// cache_creation 始终置 0；仅在开启模拟缓存时产生 cache_read。
+///
+/// `real_cache_hit_ratio` 是本次请求**真实**的缓存命中率
+/// （real_cache_read / real_prompt_total），用来约束模拟拆分：
+/// 配置的 `simulated_cache_ratio` 只作上限，实际取二者较小值。
+/// 真实没有缓存命中就不编造 cache_read —— 否则会出现「只发了个 hi
+/// 却报 13.5 万 cache_read」这种离谱数字。金额恒等只依赖
+/// `input + 0.1 * cache_read` 这个当量，怎么拆不影响计费，
+/// 所以没有任何理由为了缓存而缓存。
 pub fn calculate_tokens_by_credit(
     raw_input: u64,
     raw_output: u64,
@@ -331,6 +351,7 @@ pub fn calculate_tokens_by_credit(
     cost: &ModelCost,
     simulated_cache_enabled: bool,
     simulated_cache_ratio: f64,
+    real_cache_hit_ratio: f64,
 ) -> AdjustedTokens {
     let target_amount = credits * credit_price;
     let input_cost_per_token = cost.input / 1_000_000.0;
@@ -378,11 +399,17 @@ pub fn calculate_tokens_by_credit(
     // 下游系统对 cache read 按 0.1 * P_in 计费，因此 10 个 cache read token = 1 个 input token。
     // 我们选择 cache_read 为 10 的倍数，使得 0.1 * cache_read 为精确整数，
     // 从而保证 (input_tokens + 0.1 * cache_read) 恒等于 final_in，下游计算金额零误差！
+    // 有效缓存率 = min(配置上限, 真实命中率)。真实无缓存 ⇒ 不拆分。
+    let effective_cache_ratio = simulated_cache_ratio
+        .min(real_cache_hit_ratio.clamp(0.0, 1.0))
+        .clamp(0.0, 0.99);
+
     let (cache_read, adjusted_in) = if simulated_cache_enabled
         && input_cost_per_token > 0.0
         && final_in > 0
+        && effective_cache_ratio >= 0.01
     {
-        let c = simulated_cache_ratio.clamp(0.01, 0.99);
+        let c = effective_cache_ratio;
         let denom = 1.0 - 0.9 * c;
         let ideal_total = (final_in as f64) / denom;
         let ideal_r = (ideal_total * c).round() as u64;
@@ -427,7 +454,7 @@ mod tests {
         let raw_in = 1000;
         let raw_out = 200;
 
-        let adj = calculate_tokens_by_credit(raw_in, raw_out, credits, credit_price, &cost, false, 0.0);
+        let adj = calculate_tokens_by_credit(raw_in, raw_out, credits, credit_price, &cost, false, 0.0, 0.0);
         assert_eq!(adj.cache_creation_tokens, 0);
         assert_eq!(adj.cache_read_tokens, 0);
 
@@ -449,7 +476,7 @@ mod tests {
         let credits = 0.5;
         let credit_price = 0.002;
         // 目标金额 = $0.001
-        let adj = calculate_tokens_by_credit(500, 50, credits, credit_price, &cost, true, 0.8);
+        let adj = calculate_tokens_by_credit(500, 50, credits, credit_price, &cost, true, 0.8, 0.8);
         assert!(adj.cache_read_tokens > 0);
 
         // 下游按 Claude 缓存定价计算: input * $3/M + cache_read * $0.3/M + output * $15/M
@@ -472,15 +499,15 @@ mod tests {
         let credit_price = 0.08;
 
         // 场景 1：小输入 + 小输出。旧算法 ratio≈35，会把 1 token 放大到 35（速度虚高数十倍）
-        let adj = calculate_tokens_by_credit(6, 1, 0.0144, credit_price, &cost, true, 0.8);
+        let adj = calculate_tokens_by_credit(6, 1, 0.0144, credit_price, &cost, true, 0.8, 0.8);
         assert_eq!(adj.output_tokens, 1, "输出必须保持真实值 1");
 
         // 场景 2：大输入 + 多输出。旧算法 ratio<1，会把 10 token 压成 1（速度被低估）
-        let adj = calculate_tokens_by_credit(6482, 10, 0.0157, credit_price, &cost, true, 0.8);
+        let adj = calculate_tokens_by_credit(6482, 10, 0.0157, credit_price, &cost, true, 0.8, 0.8);
         assert_eq!(adj.output_tokens, 10, "输出必须保持真实值 10");
 
         // 场景 3：真实输出为 0 时保底 1，避免下游客户端报空回复
-        let adj = calculate_tokens_by_credit(100, 0, 0.02, credit_price, &cost, false, 0.0);
+        let adj = calculate_tokens_by_credit(100, 0, 0.02, credit_price, &cost, false, 0.0, 0.0);
         assert_eq!(adj.output_tokens, 1);
     }
 
@@ -500,7 +527,7 @@ mod tests {
         ] {
             for &cache_on in &[false, true] {
                 let adj = calculate_tokens_by_credit(
-                    raw_in, raw_out, credits, credit_price, &cost, cache_on, 0.8,
+                    raw_in, raw_out, credits, credit_price, &cost, cache_on, 0.8, 0.8,
                 );
                 // 下游计价：input * P_in + cache_read * 0.1 * P_in + output * P_out
                 let downstream = (adj.input_tokens as f64) * input_unit
@@ -518,12 +545,75 @@ mod tests {
         }
     }
 
+    /// 回归：真实没有缓存命中时，绝不编造 cache_read。
+    /// 线上真实案例：只发了个 "hi"，旧行为按配置 0.9 硬拆出 135730 cache_read。
+    #[test]
+    fn test_no_fabricated_cache_when_real_request_has_none() {
+        let cost = ModelCost { input: 5.0, output: 25.0 };
+        let credits = 0.23318407973466004;
+        let credit_price = 0.615385;
+
+        // 真实无缓存命中（real_cache_hit_ratio = 0），但配置缓存率为 0.9
+        let adj = calculate_tokens_by_credit(
+            760, 9, credits, credit_price, &cost, true, 0.9, 0.0,
+        );
+        assert_eq!(adj.cache_read_tokens, 0, "真实无缓存时不得编造 cache_read");
+        assert_eq!(adj.cache_creation_tokens, 0);
+        assert_eq!(adj.output_tokens, 9, "输出仍锚定真实值");
+
+        // 金额仍须精确
+        let input_unit = cost.input / 1_000_000.0;
+        let downstream = (adj.input_tokens as f64) * input_unit
+            + (adj.output_tokens as f64) * (cost.output / 1_000_000.0);
+        assert!((downstream - credits * credit_price).abs() <= input_unit);
+
+        // 对照：真实确有 0.9 命中时才允许拆出大量 cache_read
+        let adj_real = calculate_tokens_by_credit(
+            760, 9, credits, credit_price, &cost, true, 0.9, 0.9,
+        );
+        assert!(adj_real.cache_read_tokens > 0);
+        assert!(
+            adj_real.cache_read_tokens > adj.cache_read_tokens,
+            "真实有缓存时才放大"
+        );
+    }
+
+    /// 回归：配置值只作上限，实际取 min(配置, 真实)。
+    #[test]
+    fn test_configured_ratio_is_only_an_upper_bound() {
+        let cost = ModelCost { input: 3.0, output: 15.0 };
+        // 真实命中 30%，配置上限 90% ⇒ 应按 30% 拆分，不得夸大到 90%
+        let adj = calculate_tokens_by_credit(1000, 50, 0.5, 0.08, &cost, true, 0.9, 0.3);
+        let total_prompt = adj.input_tokens + adj.cache_read_tokens;
+        let hit = (adj.cache_read_tokens as f64) / (total_prompt as f64);
+        assert!(
+            (hit - 0.3).abs() < 0.02,
+            "应贴合真实 30%，实际 {hit:.4}"
+        );
+
+        // 真实命中 95%，配置上限 50% ⇒ 受配置封顶为 50%
+        let adj = calculate_tokens_by_credit(1000, 50, 0.5, 0.08, &cost, true, 0.5, 0.95);
+        let total_prompt = adj.input_tokens + adj.cache_read_tokens;
+        let hit = (adj.cache_read_tokens as f64) / (total_prompt as f64);
+        assert!((hit - 0.5).abs() < 0.02, "应被配置封顶为 50%，实际 {hit:.4}");
+    }
+
+    #[test]
+    fn test_cache_hit_ratio_helper() {
+        assert_eq!(cache_hit_ratio(0, 0, 0), 0.0);
+        assert_eq!(cache_hit_ratio(100, 0, 0), 0.0);
+        assert!((cache_hit_ratio(20, 0, 80) - 0.8).abs() < 1e-9);
+        assert!((cache_hit_ratio(10, 10, 80) - 0.8).abs() < 1e-9);
+        // 负值防御
+        assert_eq!(cache_hit_ratio(-5, -5, 0), 0.0);
+    }
+
     /// 回归：开启模拟缓存时命中率应贴合配置值，缓存量不再被 ratio 二次放大。
     #[test]
     fn test_simulated_cache_hit_ratio_matches_config() {
         let cost = ModelCost { input: 3.0, output: 15.0 };
         for &ratio in &[0.5, 0.8, 0.9] {
-            let adj = calculate_tokens_by_credit(6, 1, 0.0144, 0.08, &cost, true, ratio);
+            let adj = calculate_tokens_by_credit(6, 1, 0.0144, 0.08, &cost, true, ratio, ratio);
             let total_prompt = adj.input_tokens + adj.cache_read_tokens;
             let hit = (adj.cache_read_tokens as f64) / (total_prompt as f64);
             assert!(
@@ -541,7 +631,7 @@ mod tests {
 
         // 预算够放几十个 output token：应精确压到预算内
         let target = 0.001_f64;
-        let adj = calculate_tokens_by_credit(100, 5000, 1.0, target, &cost, true, 0.8);
+        let adj = calculate_tokens_by_credit(100, 5000, 1.0, target, &cost, true, 0.8, 0.8);
         assert!(adj.output_tokens >= 1);
         assert!(adj.output_tokens < 5000, "预算不足时输出应被缩减");
         assert_eq!(adj.input_tokens, 0);
@@ -555,7 +645,7 @@ mod tests {
         // 预算连 1 个 output token 都不够：保底 1 token 优先（避免下游报空回复），
         // 此时允许超出，但超出量不得大于 1 个 output token 的单价。
         let tiny = 0.000_001_f64;
-        let adj = calculate_tokens_by_credit(100, 5000, 0.001, 0.001, &cost, true, 0.8);
+        let adj = calculate_tokens_by_credit(100, 5000, 0.001, 0.001, &cost, true, 0.8, 0.8);
         assert_eq!(adj.output_tokens, 1, "保底 1 个 output token");
         let downstream = (adj.output_tokens as f64) * output_unit;
         assert!(downstream - tiny <= output_unit);
@@ -584,7 +674,7 @@ mod tests {
         };
         let credits = 0.0277551576782753;
         let credit_price = 0.002;
-        let adj = calculate_tokens_by_credit(760, 1, credits, credit_price, &cost, false, 0.0);
+        let adj = calculate_tokens_by_credit(760, 1, credits, credit_price, &cost, false, 0.0, 0.0);
         assert_eq!(adj.output_tokens, 1);
         assert_eq!(adj.input_tokens, 6);
         let calculated = (adj.input_tokens as f64 * (5.0 / 1_000_000.0))

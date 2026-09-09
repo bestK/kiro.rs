@@ -1580,6 +1580,12 @@ async fn handle_non_stream_request(
             .as_ref()
             .map(|pm| pm.get_cost(model))
             .unwrap_or_default();
+        // 真实命中率必须在覆盖前算出来，用于约束模拟拆分
+        let real_hit_ratio = crate::model::pricing::cache_hit_ratio(
+            final_input_tokens,
+            cache_creation_tokens,
+            cache_read_tokens,
+        );
         let adj = crate::model::pricing::calculate_tokens_by_credit(
             final_input_tokens.max(0) as u64,
             output_tokens.max(0) as u64,
@@ -1588,6 +1594,7 @@ async fn handle_non_stream_request(
             &cost,
             token_by_credit.simulated_cache_enabled,
             token_by_credit.simulated_cache_ratio,
+            real_hit_ratio,
         );
         final_input_tokens = adj.input_tokens as i32;
         output_tokens = adj.output_tokens as i32;

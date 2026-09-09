@@ -69,6 +69,8 @@ export interface ConsoleTableProps<T> {
   empty?: ReactNode
   /** 表格上方右侧的额外控件（与列控制菜单同一行） */
   toolbar?: ReactNode
+  /** 表格视觉风格：compact（默认 34px 紧凑运维）/ relaxed（宽松舒适，如 sub2api 风格） */
+  variant?: 'compact' | 'relaxed'
 }
 
 /** 列可见性：默认隐藏 optional 列，选择记到 localStorage */
@@ -144,6 +146,7 @@ function ConsoleTableImpl<T>({
   loading = false,
   empty,
   toolbar,
+  variant = 'compact',
 }: ConsoleTableProps<T>) {
   const { ordered, visible, toggle } = useColumnVisibility(
     columns,
@@ -227,7 +230,7 @@ function ConsoleTableImpl<T>({
       )}
 
       <div className="overflow-x-auto rounded-xl border border-border/60 bg-card [transform:translateZ(0)]">
-        <table className="console-table">
+        <table className={cn('console-table', variant === 'relaxed' && 'console-table-relaxed')}>
           <thead>
             <tr>
               {renderExpandedRow && <th className="w-8 px-1 text-center" />}

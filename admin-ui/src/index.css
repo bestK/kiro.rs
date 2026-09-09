@@ -277,6 +277,22 @@
     background: hsl(var(--primary) / 0.14);
   }
 
+  /* 宽松表格样式（sub2api 日志风格，舒适间距与自然行高） */
+  .console-table-relaxed thead th {
+    height: 38px;
+    padding: 8px 14px;
+    font-size: 11.5px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    background: hsl(var(--muted) / 0.5);
+    box-shadow: inset 0 -1px 0 0 hsl(var(--border) / 0.7);
+  }
+  .console-table-relaxed tbody td {
+    height: auto;
+    padding: 10px 14px;
+    box-shadow: inset 0 -1px 0 0 hsl(var(--border) / 0.35);
+  }
+
   /* 3px 左侧状态色轨：异常在三个页面里都是同一个信号 */
   .console-rail {
     box-shadow: inset 3px 0 0 0 var(--rail, transparent);

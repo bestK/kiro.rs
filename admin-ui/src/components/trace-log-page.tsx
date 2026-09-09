@@ -382,7 +382,7 @@ function CostCell({ rec }: { rec: TraceRecord }) {
       : 'text-gray-500 dark:text-gray-400'
 
   const profitSign = isProfit ? '+' : isLoss ? '-' : ''
-  const profitText = profit != null ? `${profitSign}¥${Math.abs(profit).toFixed(4)}` : null
+  const profitText = profit != null ? `${profitSign}$${Math.abs(profit).toFixed(4)}` : null
 
   const content = (
     <div className="space-y-0.5 text-xs font-mono">
@@ -430,14 +430,14 @@ function CostCell({ rec }: { rec: TraceRecord }) {
           {cost != null && (
             <div className="flex items-center justify-between gap-4 font-mono">
               <span className="text-gray-400 font-sans">采购成本</span>
-              <span className="font-medium text-amber-300">¥{cost.toFixed(6)}</span>
+              <span className="font-medium text-amber-300">${cost.toFixed(6)}</span>
             </div>
           )}
           {revenue != null && (
             <div className="flex items-center justify-between gap-4 font-mono">
               <span className="text-gray-400 font-sans">下游收入</span>
               <span className="font-medium text-sky-300">
-                ¥{revenue.toFixed(6)}
+                ${revenue.toFixed(6)}
                 {quota != null ? ` (${quota.toLocaleString()} 额度)` : ''}
               </span>
             </div>

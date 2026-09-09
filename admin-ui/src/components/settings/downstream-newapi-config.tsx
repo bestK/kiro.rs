@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import {
   Globe,
   KeyRound,
-  Coins,
+  DollarSign,
   CheckCircle2,
   XCircle,
   Loader2,
@@ -257,7 +257,7 @@ export function DownstreamNewApiConfigCard({
         <div className="space-y-1.5">
           <div className="flex items-center justify-between">
             <label className="text-xs font-medium text-foreground flex items-center gap-1.5">
-              <Coins className="h-3.5 w-3.5 text-amber-500" />
+              <DollarSign className="h-3.5 w-3.5 text-amber-500" />
               上游采购成本单价
             </label>
             <div className="flex items-center rounded border border-border bg-muted/30 p-0.5 text-[10px]">
@@ -271,7 +271,7 @@ export function DownstreamNewApiConfigCard({
                     : 'text-muted-foreground hover:text-foreground'
                 )}
               >
-                元 / 1000 积分
+                USD / 1000 积分
               </button>
               <button
                 type="button"
@@ -283,7 +283,7 @@ export function DownstreamNewApiConfigCard({
                     : 'text-muted-foreground hover:text-foreground'
                 )}
               >
-                元 / 单积分
+                USD / 单积分
               </button>
             </div>
           </div>
@@ -297,7 +297,7 @@ export function DownstreamNewApiConfigCard({
             className="h-8 text-xs font-mono"
           />
           <p className="text-[11px] text-muted-foreground">
-            当前单价：<span className="text-foreground font-mono font-medium">¥{costPerCredit.toFixed(4)} / 积分</span>（即 ¥{(costPerCredit * 1000).toFixed(2)} / 千分）。
+            当前单价：<span className="text-foreground font-mono font-medium">${costPerCredit.toFixed(4)} / 积分</span>（即 ${(costPerCredit * 1000).toFixed(2)} / 千分）。
           </p>
         </div>
 
@@ -305,7 +305,7 @@ export function DownstreamNewApiConfigCard({
         <div className="space-y-1.5">
           <label className="text-xs font-medium text-foreground flex items-center gap-1.5">
             <Calculator className="h-3.5 w-3.5 text-muted-foreground" />
-            下游额度点数换算率 (Quota / 货币单位)
+            下游额度点数换算率 (Quota / USD)
           </label>
           <Input
             type="number"
@@ -317,7 +317,7 @@ export function DownstreamNewApiConfigCard({
             className="h-8 text-xs font-mono"
           />
           <p className="text-[11px] text-muted-foreground">
-            NewAPI 默认 1 元（或 1 USD）= 500,000 Quota 点数。收入 = 日志 Quota ÷ 换算率。
+            NewAPI 默认 1 USD = 500,000 Quota 点数。收入 = 日志 Quota ÷ 换算率。
           </p>
         </div>
       </div>
@@ -337,13 +337,13 @@ export function DownstreamNewApiConfigCard({
           <div className="rounded bg-background/80 p-2 border border-border/50">
             <div className="text-muted-foreground text-[10px]">采购成本 (0.4826 credits)</div>
             <div className="font-medium text-foreground mt-0.5">
-              0.4826 × {costPerCredit} = <span className="text-amber-600 dark:text-amber-400">¥{(0.4826 * costPerCredit).toFixed(6)}</span>
+              0.4826 × {costPerCredit} = <span className="text-amber-600 dark:text-amber-400">${(0.4826 * costPerCredit).toFixed(6)}</span>
             </div>
           </div>
           <div className="rounded bg-background/80 p-2 border border-border/50">
             <div className="text-muted-foreground text-[10px]">下游收入 (12,927 Quota)</div>
             <div className="font-medium text-foreground mt-0.5">
-              12,927 ÷ {quotaPerUnit.toLocaleString()} = <span className="text-sky-600 dark:text-sky-400">¥{(12927 / quotaPerUnit).toFixed(6)}</span>
+              12,927 ÷ {quotaPerUnit.toLocaleString()} = <span className="text-sky-600 dark:text-sky-400">${(12927 / quotaPerUnit).toFixed(6)}</span>
             </div>
           </div>
           <div className="rounded bg-background/80 p-2 border border-border/50">
@@ -351,11 +351,11 @@ export function DownstreamNewApiConfigCard({
             <div className="font-medium mt-0.5">
               {(12927 / quotaPerUnit) - (0.4826 * costPerCredit) >= 0 ? (
                 <span className="text-rose-600 dark:text-rose-400">
-                  +¥{((12927 / quotaPerUnit) - (0.4826 * costPerCredit)).toFixed(6)} (盈利)
+                  +${((12927 / quotaPerUnit) - (0.4826 * costPerCredit)).toFixed(6)} (盈利)
                 </span>
               ) : (
                 <span className="text-emerald-600 dark:text-emerald-400">
-                  -¥{Math.abs((12927 / quotaPerUnit) - (0.4826 * costPerCredit)).toFixed(6)} (亏损)
+                  -${Math.abs((12927 / quotaPerUnit) - (0.4826 * costPerCredit)).toFixed(6)} (亏损)
                 </span>
               )}
             </div>

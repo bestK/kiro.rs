@@ -398,14 +398,14 @@ function CostCell({
 
   const content = (
     <div className="space-y-0.5 font-mono">
-      {/* 第一行：上游 kiro 积分（字号大些） */}
+      {/* 第一行：上游 kiro 积分（字号大些，清晰不加粗） */}
       <div className="flex items-center gap-1">
-        <span className="text-sm font-semibold text-gray-900 dark:text-white tabular-nums">
+        <span className="text-[13px] font-normal text-gray-900 dark:text-gray-100 tabular-nums">
           ${credits.toFixed(4)}
         </span>
       </div>
 
-      {/* 第二行：newapi收费金额小些，盈亏放到金额后面 */}
+      {/* 第二行：newapi收费金额小些，盈亏放到金额后面（不加粗保持清晰锐利） */}
       {revenue != null || profitText ? (
         <div className="flex items-center gap-1.5 text-[11px] tabular-nums leading-tight cursor-help">
           {revenue != null && (
@@ -414,9 +414,9 @@ function CostCell({
             </span>
           )}
           {profitText && (
-            <span className={cn('font-semibold flex items-center gap-0.5', profitColor)}>
+            <span className={cn('font-normal flex items-center gap-0.5', profitColor)}>
               <span>{profitText}</span>
-              <span className="text-[10px] font-medium">{isProfit ? '盈' : isLoss ? '亏' : '平'}</span>
+              <span className="text-[10px] opacity-85">{isProfit ? '盈' : isLoss ? '亏' : '平'}</span>
             </span>
           )}
         </div>
@@ -446,18 +446,18 @@ function CostCell({
           </div>
           <div className="flex items-center justify-between gap-4 font-mono">
             <span className="text-gray-400 font-sans">上游消费</span>
-            <span className="font-medium text-white">${credits.toFixed(4)}</span>
+            <span className="font-normal text-white">${credits.toFixed(4)}</span>
           </div>
           {cost != null && (
             <div className="flex items-center justify-between gap-4 font-mono">
               <span className="text-gray-400 font-sans">采购成本</span>
-              <span className="font-medium text-amber-300">${cost.toFixed(6)}</span>
+              <span className="font-normal text-amber-300">${cost.toFixed(6)}</span>
             </div>
           )}
           {revenue != null && (
             <div className="flex items-center justify-between gap-4 font-mono">
               <span className="text-gray-400 font-sans">下游收入</span>
-              <span className="font-medium text-sky-300">
+              <span className="font-normal text-sky-300">
                 ${revenue.toFixed(6)}
                 {quota != null ? ` (${quota.toLocaleString()} 额度)` : ''}
               </span>
@@ -466,7 +466,7 @@ function CostCell({
           {profit != null && (
             <div className="flex items-center justify-between gap-4 border-t border-gray-700 pt-1.5 font-mono">
               <span className="text-gray-400 font-sans">净盈亏</span>
-              <span className={cn('font-bold', profitColor)}>
+              <span className={cn('font-medium', profitColor)}>
                 {profitText} ({isProfit ? '盈利' : isLoss ? '亏损' : '持平'})
               </span>
             </div>

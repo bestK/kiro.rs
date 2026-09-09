@@ -312,9 +312,17 @@ fn load_builtin_fallback_prices(map: &mut HashMap<String, ModelCost>) {
 
 /// 核心倒推算法：
 /// 将本次请求消耗的 credits 折算为总目标金额 target_amount = credits * credit_price。
-/// 然后依据模型的 input 与 output 单价，反推 input_tokens 与 output_tokens。
-/// 保证下游按公式 (in * P_in + out * P_out) / 1,000,000 计算的总价恰好等于 target_amount。
-/// 缓存 token（cache_creation / cache_read）始终置 0。
+/// 然后依据模型的 input 与 output 单价，反推出下游可见的 token 分布，
+/// 保证下游按 (in * P_in + 0.1 * cache_read * P_in + out * P_out) / 1e6 算出的总价等于 target_amount。
+///
+/// 关键约束：**output_tokens 锚定真实值**。
+/// 下游 NewAPI 用 output_tokens / duration 计算生成速度，等比缩放 output 会让速度严重失真
+/// （实测小输入请求把 1 token 放大到 30~40 倍，出现 1682 t/s 这种不可能的值；
+/// 反之大输入请求 ratio < 1 会把 10 token 压成 1，速度被低估）。
+/// 因此这里只把预算差额交给输入侧（uncached input + 模拟 cache_read）吸收：
+/// 输入侧 token 数量不参与任何速度计算，放大它不会产生可观测的失真。
+///
+/// cache_creation 始终置 0；仅在开启模拟缓存时产生 cache_read。
 pub fn calculate_tokens_by_credit(
     raw_input: u64,
     raw_output: u64,
@@ -338,63 +346,32 @@ pub fn calculate_tokens_by_credit(
         };
     }
 
-    // 计算实际原始 token 对应的基准单价
-    let raw_price = (raw_input as f64) * input_cost_per_token
-        + (raw_output as f64) * output_cost_per_token;
+    // 输出锚定真实值：保底 1 个 token，避免部分下游客户端报错空回复。
+    let final_out = raw_output.max(1);
 
-    let (mut final_in, mut final_out) = if raw_price > 0.0 {
-        let ratio = target_amount / raw_price;
-        (
-            ((raw_input as f64) * ratio).floor() as u64,
-            ((raw_output as f64) * ratio).floor() as u64,
-        )
-    } else {
-        // 无原始 token 或无法按比例缩放时，按 50%:50% 分配预算
-        let in_budget = target_amount * 0.5;
-        let out_budget = target_amount * 0.5;
-        let in_tokens = if input_cost_per_token > 0.0 {
-            (in_budget / input_cost_per_token).floor() as u64
-        } else {
-            0
-        };
-        let out_tokens = if output_cost_per_token > 0.0 {
-            (out_budget / output_cost_per_token).floor() as u64
-        } else {
-            0
-        };
-        (in_tokens, out_tokens)
-    };
-
-    // 确保至少有 1 个 output token，避免部分下游客户端报错空回复
-    if final_out == 0 && output_cost_per_token > 0.0 {
-        final_out = 1;
-    }
-
-    // 精确消除舍入差额：
-    // 计算当前分配所得金额与目标金额的差额
-    let current_amount = (final_in as f64) * input_cost_per_token
-        + (final_out as f64) * output_cost_per_token;
-    let mut diff = target_amount - current_amount;
-
-    // 优先通过微调 output_tokens 补齐差额（但 output_tokens 保底不能低于 1）
+    // 极端兜底：真实输出成本本身已超预算（credit 单价极低 / 输出极长）。
+    // 此时无法既保住真实输出又压到目标金额，只能缩放输出——这是唯一诚实的选择。
     if output_cost_per_token > 0.0 {
-        let adjust_out = (diff / output_cost_per_token).round() as i64;
-        if adjust_out != 0 {
-            let candidate = ((final_out as i64) + adjust_out).max(1);
-            let actual_adjust = candidate - (final_out as i64);
-            final_out = candidate as u64;
-            diff -= (actual_adjust as f64) * output_cost_per_token;
+        let out_only_cost = (final_out as f64) * output_cost_per_token;
+        if out_only_cost > target_amount {
+            let capped = (target_amount / output_cost_per_token).floor() as u64;
+            return AdjustedTokens {
+                input_tokens: 0,
+                output_tokens: capped.max(1),
+                cache_creation_tokens: 0,
+                cache_read_tokens: 0,
+            };
         }
     }
 
-    // 剩余差额由 input_tokens 精细微调补齐
-    if input_cost_per_token > 0.0 && diff.abs() > 1e-9 {
-        let adjust_in = (diff / input_cost_per_token).round() as i64;
-        if adjust_in != 0 {
-            let candidate = ((final_in as i64) + adjust_in).max(0);
-            final_in = candidate as u64;
-        }
-    }
+    // 剩余预算全部交给输入侧吸收，换算为「输入 token 当量」。
+    // final_in 表示 uncached_input + 0.1 * cache_read 的等效总量。
+    let input_budget = target_amount - (final_out as f64) * output_cost_per_token;
+    let final_in = if input_cost_per_token > 0.0 {
+        (input_budget / input_cost_per_token).round().max(0.0) as u64
+    } else {
+        0
+    };
 
     // 模拟 Prompt 缓存拆分：
     // 当开启模拟缓存且输入单价大于 0 时，将 final_in 拆为 (普通 input_tokens + 模拟 cache_read_tokens)。
@@ -486,6 +463,102 @@ mod tests {
         let total_prompt = adj.input_tokens + adj.cache_read_tokens;
         let hit_ratio = (adj.cache_read_tokens as f64) / (total_prompt as f64);
         assert!((hit_ratio - 0.8).abs() < 0.05);
+    }
+
+    /// 回归：输出 token 必须锚定真实值，否则下游按 output/duration 算出的生成速度会失真。
+    #[test]
+    fn test_output_tokens_anchored_to_real_value() {
+        let cost = ModelCost { input: 3.0, output: 15.0 };
+        let credit_price = 0.08;
+
+        // 场景 1：小输入 + 小输出。旧算法 ratio≈35，会把 1 token 放大到 35（速度虚高数十倍）
+        let adj = calculate_tokens_by_credit(6, 1, 0.0144, credit_price, &cost, true, 0.8);
+        assert_eq!(adj.output_tokens, 1, "输出必须保持真实值 1");
+
+        // 场景 2：大输入 + 多输出。旧算法 ratio<1，会把 10 token 压成 1（速度被低估）
+        let adj = calculate_tokens_by_credit(6482, 10, 0.0157, credit_price, &cost, true, 0.8);
+        assert_eq!(adj.output_tokens, 10, "输出必须保持真实值 10");
+
+        // 场景 3：真实输出为 0 时保底 1，避免下游客户端报空回复
+        let adj = calculate_tokens_by_credit(100, 0, 0.02, credit_price, &cost, false, 0.0);
+        assert_eq!(adj.output_tokens, 1);
+    }
+
+    /// 回归：输出锚定后，计费金额仍需精确 —— 差额由输入侧吸收，误差不超过 1 个 input token。
+    #[test]
+    fn test_billing_exact_with_anchored_output() {
+        let cost = ModelCost { input: 3.0, output: 15.0 };
+        let credit_price = 0.08;
+        let input_unit = cost.input / 1_000_000.0;
+
+        for &(raw_in, raw_out, credits) in &[
+            (6u64, 1u64, 0.0144f64),
+            (6482, 10, 0.0157),
+            (6511, 21, 0.0183),
+            (15, 1, 0.0161),
+            (4, 1, 0.0247),
+        ] {
+            for &cache_on in &[false, true] {
+                let adj = calculate_tokens_by_credit(
+                    raw_in, raw_out, credits, credit_price, &cost, cache_on, 0.8,
+                );
+                // 下游计价：input * P_in + cache_read * 0.1 * P_in + output * P_out
+                let downstream = (adj.input_tokens as f64) * input_unit
+                    + (adj.cache_read_tokens as f64) * input_unit * 0.1
+                    + (adj.output_tokens as f64) * (cost.output / 1_000_000.0);
+                let target = credits * credit_price;
+                assert!(
+                    (downstream - target).abs() <= input_unit,
+                    "计费误差超过 1 个 input token: raw_in={raw_in} cache={cache_on} \
+                     downstream={downstream:.10} target={target:.10}"
+                );
+                assert_eq!(adj.output_tokens, raw_out.max(1));
+                assert_eq!(adj.cache_creation_tokens, 0);
+            }
+        }
+    }
+
+    /// 回归：开启模拟缓存时命中率应贴合配置值，缓存量不再被 ratio 二次放大。
+    #[test]
+    fn test_simulated_cache_hit_ratio_matches_config() {
+        let cost = ModelCost { input: 3.0, output: 15.0 };
+        for &ratio in &[0.5, 0.8, 0.9] {
+            let adj = calculate_tokens_by_credit(6, 1, 0.0144, 0.08, &cost, true, ratio);
+            let total_prompt = adj.input_tokens + adj.cache_read_tokens;
+            let hit = (adj.cache_read_tokens as f64) / (total_prompt as f64);
+            assert!(
+                (hit - ratio).abs() < 0.02,
+                "命中率偏离配置: ratio={ratio} actual={hit:.4}"
+            );
+        }
+    }
+
+    /// 边界：真实输出成本已超预算时，只能缩放输出（唯一诚实选择），且不得为 0。
+    #[test]
+    fn test_output_capped_when_real_cost_exceeds_budget() {
+        let cost = ModelCost { input: 3.0, output: 15.0 };
+        let output_unit = cost.output / 1_000_000.0;
+
+        // 预算够放几十个 output token：应精确压到预算内
+        let target = 0.001_f64;
+        let adj = calculate_tokens_by_credit(100, 5000, 1.0, target, &cost, true, 0.8);
+        assert!(adj.output_tokens >= 1);
+        assert!(adj.output_tokens < 5000, "预算不足时输出应被缩减");
+        assert_eq!(adj.input_tokens, 0);
+        assert_eq!(adj.cache_read_tokens, 0);
+        let downstream = (adj.output_tokens as f64) * output_unit;
+        assert!(
+            downstream <= target + 1e-12,
+            "缩放后仍超预算: downstream={downstream:.10} target={target:.10}"
+        );
+
+        // 预算连 1 个 output token 都不够：保底 1 token 优先（避免下游报空回复），
+        // 此时允许超出，但超出量不得大于 1 个 output token 的单价。
+        let tiny = 0.000_001_f64;
+        let adj = calculate_tokens_by_credit(100, 5000, 0.001, 0.001, &cost, true, 0.8);
+        assert_eq!(adj.output_tokens, 1, "保底 1 个 output token");
+        let downstream = (adj.output_tokens as f64) * output_unit;
+        assert!(downstream - tiny <= output_unit);
     }
 
     #[test]

@@ -347,27 +347,33 @@ export function TimeRangePicker({
           <div className="space-y-1.5">
             <div className="space-y-0.5">
               <label className="text-[10px] text-muted-foreground">开始时间</label>
-              <Input
-                type="datetime-local"
-                value={startDate}
-                onChange={(e) => {
-                  setStartDate(e.target.value)
-                  setDateError(null)
-                }}
-                className="h-7 text-xs font-mono"
-              />
+              <div className="relative">
+                <Input
+                  type="datetime-local"
+                  value={startDate}
+                  onChange={(e) => {
+                    setStartDate(e.target.value)
+                    setDateError(null)
+                  }}
+                  className="h-7 pr-7 text-xs font-mono [&::-webkit-calendar-picker-indicator]:opacity-0 [&::-webkit-calendar-picker-indicator]:absolute [&::-webkit-calendar-picker-indicator]:inset-0 [&::-webkit-calendar-picker-indicator]:cursor-pointer"
+                />
+                <Calendar className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+              </div>
             </div>
             <div className="space-y-0.5">
               <label className="text-[10px] text-muted-foreground">结束时间</label>
-              <Input
-                type="datetime-local"
-                value={endDate}
-                onChange={(e) => {
-                  setEndDate(e.target.value)
-                  setDateError(null)
-                }}
-                className="h-7 text-xs font-mono"
-              />
+              <div className="relative">
+                <Input
+                  type="datetime-local"
+                  value={endDate}
+                  onChange={(e) => {
+                    setEndDate(e.target.value)
+                    setDateError(null)
+                  }}
+                  className="h-7 pr-7 text-xs font-mono [&::-webkit-calendar-picker-indicator]:opacity-0 [&::-webkit-calendar-picker-indicator]:absolute [&::-webkit-calendar-picker-indicator]:inset-0 [&::-webkit-calendar-picker-indicator]:cursor-pointer"
+                />
+                <Calendar className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+              </div>
             </div>
           </div>
 

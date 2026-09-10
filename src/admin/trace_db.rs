@@ -237,9 +237,13 @@ pub struct TraceQuery {
     pub model: Option<String>,
     /// 仅返回非 success
     pub only_failed: bool,
-    /// 按账号分组筛选：只返回最终凭据属于这些 id 的 trace。
-    /// 由 handler 层在查询前根据 group 参数转换为凭据 id 白名单填入。
-    pub credential_ids: Option<Vec<u64>>,
+    /// 按账号分组筛选：只返回由这些客户端 Key 发起的 trace。
+    ///
+    /// 由 handler 层在查询前根据 group 参数转换为 **Key id 白名单**填入。
+    /// 依据 Key 而非凭据：请求走哪个分组由发起请求的 Key 决定（见
+    /// [`crate::admin::client_keys::ClientKey::group`]），而一个凭据可同属多个分组，
+    /// 按凭据过滤会让它的记录在每个所属分组下重复出现。
+    pub key_ids: Option<Vec<u64>>,
     /// 时间窗口起点（Unix **秒**，含）。与 `ts_epoch` 列同单位，走 `idx_traces_ts` 索引。
     pub start_ts: Option<i64>,
     /// 时间窗口终点（Unix **秒**，含）
@@ -581,16 +585,13 @@ impl TraceStore {
             clauses.push("model = ?".to_string());
             params.push(Box::new(m.clone()));
         }
-        if let Some(ids) = &q.credential_ids {
+        if let Some(ids) = &q.key_ids {
             if ids.is_empty() {
-                // 空白名单 = 该分组下无凭据 → 强制零匹配
+                // 空白名单 = 没有任何 Key 绑定该分组 → 强制零匹配
                 clauses.push("1=0".to_string());
             } else {
                 let placeholders: Vec<&str> = ids.iter().map(|_| "?").collect();
-                clauses.push(format!(
-                    "final_credential_id IN ({})",
-                    placeholders.join(",")
-                ));
+                clauses.push(format!("key_id IN ({})", placeholders.join(",")));
                 for id in ids {
                     params.push(Box::new(*id as i64));
                 }
@@ -1445,6 +1446,83 @@ mod tests {
         assert_eq!(turn3.sticky_outcome.as_deref(), Some(sticky::MISS_UNAVAILABLE));
         assert_eq!(turn3.previous_credential_id, Some(5));
         assert_eq!(turn3.usage_source.as_deref(), Some(usage_source::SIMULATED));
+    }
+
+    /// 分组过滤按 Key 白名单，而非「凭据当前属于哪些分组」。
+    ///
+    /// 关键场景：凭据 5 被两个分组的 Key 共用（号同属多组 / 分组间 references）。
+    /// 按凭据过滤时它的记录会在两个分组下各出现一次；按 Key 过滤则各归其主。
+    #[test]
+    fn group_filter_scopes_by_key_not_credential() {
+        let store = mem_store();
+
+        // 分组 A 绑定了两把 Key（3、7），分组 B 绑定一把（9）。
+        // 三条记录都落在同一个凭据 5 上。
+        let mut a_key3 = sample(TraceSample {
+            trace_id: "a-key3",
+            status: "success",
+            credential_id: 5,
+            model: "m1",
+        });
+        a_key3.key_id = 3;
+        store.insert(&a_key3);
+
+        let mut a_key7 = sample(TraceSample {
+            trace_id: "a-key7",
+            status: "success",
+            credential_id: 5,
+            model: "m1",
+        });
+        a_key7.key_id = 7;
+        store.insert(&a_key7);
+
+        let mut b_key9 = sample(TraceSample {
+            trace_id: "b-key9",
+            status: "success",
+            credential_id: 5,
+            model: "m1",
+        });
+        b_key9.key_id = 9;
+        store.insert(&b_key9);
+
+        let ids = |q: TraceQuery| {
+            let mut v: Vec<String> = store.query(&q).into_iter().map(|r| r.trace_id).collect();
+            v.sort();
+            v
+        };
+
+        // 一个分组可以有多把 Key：两把都要命中
+        assert_eq!(
+            ids(TraceQuery {
+                key_ids: Some(vec![3, 7]),
+                limit: 50,
+                ..Default::default()
+            }),
+            vec!["a-key3", "a-key7"],
+            "分组下多把 Key 应全部命中，且不含其它分组的记录"
+        );
+
+        // 同一个凭据，按 B 的 Key 过滤只出 B 的那条——不再因共用凭据而重复出现
+        assert_eq!(
+            ids(TraceQuery {
+                key_ids: Some(vec![9]),
+                limit: 50,
+                ..Default::default()
+            }),
+            vec!["b-key9"],
+            "凭据同属多组时，记录只归发起请求的 Key 所在分组"
+        );
+
+        // 空白名单 = 没有任何 Key 绑定该分组 → 零匹配（而非退化成全表）
+        assert!(
+            ids(TraceQuery {
+                key_ids: Some(vec![]),
+                limit: 50,
+                ..Default::default()
+            })
+            .is_empty(),
+            "无 Key 绑定的分组不应返回任何记录"
+        );
     }
 
     #[test]

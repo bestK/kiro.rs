@@ -1853,19 +1853,23 @@ pub async fn list_traces(
     State(state): State<AdminState>,
     Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> impl IntoResponse {
-    // 解析分组筛选：把 group 名转为凭据 id 白名单（先于查询执行，避免分页错位）
+    // 解析分组筛选：把 group 名转为「绑定该分组的 Key id」白名单
+    // （先于查询执行，避免分页错位）。
+    //
+    // 依据 Key 而非凭据：请求实际走哪个分组由发起请求的 Key 决定，一个凭据可同属多个
+    // 分组，按凭据过滤会让它的记录在每个所属分组下都出现一次。未绑定分组的 Key
+    // （含 master apiKey）可用全部账号，不归属任何分组，因此不会被任何分组过滤命中。
     let group = params
         .get("group")
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
-    let credential_ids: Option<Vec<u64>> = group.as_ref().map(|g| {
+    let key_ids: Option<Vec<u64>> = group.as_ref().map(|g| {
         state
-            .service
-            .get_all_credentials()
-            .credentials
+            .client_keys
+            .list()
             .iter()
-            .filter(|c| c.groups.iter().any(|cg| cg == g))
-            .map(|c| c.id)
+            .filter(|k| k.group.as_deref() == Some(g.as_str()))
+            .map(|k| k.id)
             .collect()
     });
 
@@ -1900,7 +1904,7 @@ pub async fn list_traces(
             .get("downstreamUser")
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty()),
-        credential_ids,
+        key_ids,
         // startTime / endTime 为 Unix 秒，与 traces.ts_epoch 同单位
         start_ts: params.get("startTime").and_then(|s| s.parse::<i64>().ok()),
         end_ts: params.get("endTime").and_then(|s| s.parse::<i64>().ok()),

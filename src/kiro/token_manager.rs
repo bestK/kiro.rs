@@ -18,7 +18,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::time::{Duration as StdDuration, Instant};
 
 use crate::http_client::{ProxyConfig, build_client};
-use crate::kiro::error::UpstreamRateLimitError;
+use crate::kiro::error::{NoAvailableCredentialsError, UpstreamRateLimitError};
 use crate::kiro::kiro_version::USAGE_API_KIRO_VERSION;
 use crate::kiro::machine_id;
 use crate::kiro::model::available_models::{ListAvailableModelsResponse, UpstreamModel};
@@ -2089,6 +2089,53 @@ impl MultiTokenManager {
             .any(|entry| self.entry_available_for_request_with_tiers(entry, model, group_tiers.as_ref(), now))
     }
 
+    /// 检查指定模型和分组下是否有可用的凭据（不考虑滑动窗口 RPM 限流）。
+    /// 如果全部被自动禁用但满足自愈条件，会自动尝试一次自愈。
+    pub fn has_available_credentials(
+        &self,
+        model: Option<&str>,
+        group: Option<&str>,
+    ) -> bool {
+        let now = Instant::now();
+        let group_tiers = self.resolve_group_tiers(group);
+        let has_candidate = |entries: &[CredentialEntry]| {
+            entries.iter().any(|entry| {
+                !entry.disabled
+                    && !entry
+                        .throttled_until
+                        .map(|until| until > now)
+                        .unwrap_or(false)
+                    && credential_matches_request_with_tiers(&entry.credentials, model, group_tiers.as_ref())
+                    && self.cached_model_support(entry.id, model) != CachedModelSupport::Unsupported
+            })
+        };
+
+        {
+            let entries = self.entries.lock();
+            if has_candidate(&entries) {
+                return true;
+            }
+        }
+
+        if self.try_self_heal(model, group) {
+            let entries = self.entries.lock();
+            return has_candidate(&entries);
+        }
+
+        false
+    }
+
+    /// 当所有其它条件均满足的候选都耗尽 RPM 额度时，返回最早可重试秒数。
+    #[allow(dead_code)]
+    pub fn check_rpm_retry_after(
+        &self,
+        model: Option<&str>,
+        group: Option<&str>,
+    ) -> Option<u64> {
+        let entries = self.entries.lock();
+        self.rpm_retry_after_secs(&entries, model, group, Instant::now())
+    }
+
     /// 根据负载均衡模式选择下一个凭据
     ///
     /// - priority 模式：选择优先级最高（tier 最小、数字 priority 最小）的可用凭据
@@ -2270,11 +2317,12 @@ impl MultiTokenManager {
 
         loop {
             if attempt_count >= max_attempts {
-                anyhow::bail!(
+                return Err(NoAvailableCredentialsError::new(format!(
                     "所有凭据均无法获取有效 Token（可用: {}/{}）",
                     self.available_count(),
                     total
-                );
+                ))
+                .into());
             }
 
             let (id, credentials, is_balanced, route) = {
@@ -2314,7 +2362,11 @@ impl MultiTokenManager {
                     // 因为 available_count() 会尝试获取 entries 锁，
                     // 而此时我们已经持有该锁，会导致死锁
                     let available = entries.iter().filter(|e| !e.disabled).count();
-                    anyhow::bail!("所有凭据均已禁用（{}/{}）", available, total);
+                    return Err(NoAvailableCredentialsError::new(format!(
+                        "所有凭据均已禁用（{}/{}）",
+                        available, total
+                    ))
+                    .into());
                 };
 
                 (id, credentials, is_balanced, route)
@@ -2342,7 +2394,11 @@ impl MultiTokenManager {
                     };
                     attempt_count += 1;
                     if !has_available {
-                        anyhow::bail!("所有凭据均已禁用（0/{}）", total);
+                        return Err(NoAvailableCredentialsError::new(format!(
+                            "所有凭据均已禁用（0/{}）",
+                            total
+                        ))
+                        .into());
                     }
                 }
             }
@@ -6804,6 +6860,24 @@ mod tests {
             "错误应提示所有凭据禁用，实际: {}",
             err
         );
+    }
+
+    #[test]
+    fn test_multi_token_manager_has_available_credentials() {
+        let config = Config::default();
+        let cred1 = KiroCredentials::default();
+        let cred2 = KiroCredentials::default();
+
+        let manager =
+            MultiTokenManager::new(config, vec![cred1, cred2], None, None, false).unwrap();
+
+        assert!(manager.has_available_credentials(None, None));
+
+        manager.report_quota_exhausted(1);
+        assert!(manager.has_available_credentials(None, None));
+
+        manager.report_quota_exhausted(2);
+        assert!(!manager.has_available_credentials(None, None));
     }
 
     #[test]

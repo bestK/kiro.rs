@@ -14,7 +14,7 @@ use tokio::time::sleep;
 use crate::admin::trace_db::{TraceAttempt, TraceRoute, TraceSink, outcome, truncate_snippet};
 use crate::http_client::{ProxyConfig, build_client};
 use crate::kiro::endpoint::{KiroEndpoint, RequestContext};
-use crate::kiro::error::UpstreamRateLimitError;
+use crate::kiro::error::{NoAvailableCredentialsError, UpstreamRateLimitError};
 use crate::kiro::machine_id;
 use crate::kiro::model::credentials::KiroCredentials;
 use crate::kiro::token_manager::{InFlightGuard, MultiTokenManager};
@@ -381,6 +381,9 @@ impl KiroProvider {
                         );
                         return Err(e);
                     }
+                    if let Some(_no_creds) = e.downcast_ref::<NoAvailableCredentialsError>() {
+                        return Err(e);
+                    }
                     // Preserve the prior upstream 429 as the terminal trace attempt. A
                     // concurrent selection failure has no credential to attribute.
                     if let Some(rate_limit) = take_rate_limit_error(&mut last_error) {
@@ -547,7 +550,11 @@ impl KiroProvider {
                     .token_manager
                     .report_quota_exhausted_for_request(ctx.id, None, group);
                 if !has_available {
-                    anyhow::bail!("MCP 请求失败（所有凭据已用尽）: {} {}", status, body);
+                    return Err(NoAvailableCredentialsError::new(format!(
+                        "MCP 请求失败（所有凭据已用尽）: {} {}",
+                        status, body
+                    ))
+                    .into());
                 }
                 last_error = Some(anyhow::anyhow!("MCP 请求失败: {} {}", status, body));
                 continue;
@@ -589,7 +596,11 @@ impl KiroProvider {
                     .token_manager
                     .report_suspended_for_request(ctx.id, None, group);
                 if !has_available {
-                    anyhow::bail!("MCP 请求失败（所有凭据已用尽）: {} {}", status, body);
+                    return Err(NoAvailableCredentialsError::new(format!(
+                        "MCP 请求失败（所有凭据已用尽）: {} {}",
+                        status, body
+                    ))
+                    .into());
                 }
                 last_error = Some(anyhow::anyhow!("MCP 请求失败（账号封禁）: {} {}", status, body));
                 continue;
@@ -625,7 +636,11 @@ impl KiroProvider {
                     .token_manager
                     .report_failure_for_request(ctx.id, None, group);
                 if !has_available {
-                    anyhow::bail!("MCP 请求失败（所有凭据已用尽）: {} {}", status, body);
+                    return Err(NoAvailableCredentialsError::new(format!(
+                        "MCP 请求失败（所有凭据已用尽）: {} {}",
+                        status, body
+                    ))
+                    .into());
                 }
                 last_error = Some(anyhow::anyhow!("MCP 请求失败: {} {}", status, body));
                 continue;
@@ -810,6 +825,9 @@ impl KiroProvider {
                         );
                         return Err(e);
                     }
+                    if let Some(_no_creds) = e.downcast_ref::<NoAvailableCredentialsError>() {
+                        return Err(e);
+                    }
                     if let Some(rate_limit) = take_rate_limit_error(&mut last_error) {
                         return Err(rate_limit);
                     }
@@ -963,12 +981,13 @@ impl KiroProvider {
                     group,
                 );
                 if !has_available {
-                    anyhow::bail!(
+                    return Err(NoAvailableCredentialsError::new(format!(
                         "{} API 请求失败（所有凭据已用尽）: {} {}",
                         api_type,
                         status,
                         body
-                    );
+                    ))
+                    .into());
                 }
 
                 last_error = Some(anyhow::anyhow!(
@@ -1013,12 +1032,13 @@ impl KiroProvider {
                     group,
                 );
                 if !has_available {
-                    anyhow::bail!(
+                    return Err(NoAvailableCredentialsError::new(format!(
                         "{} API 请求失败（所有凭据已用尽）: {} {}",
                         api_type,
                         status,
                         body
-                    );
+                    ))
+                    .into());
                 }
                 last_error = Some(anyhow::anyhow!(
                     "{} API 请求失败（账号封禁）: {} {}",
@@ -1060,12 +1080,13 @@ impl KiroProvider {
                     self.token_manager
                         .report_failure_for_request(ctx.id, model.as_deref(), group);
                 if !has_available {
-                    anyhow::bail!(
+                    return Err(NoAvailableCredentialsError::new(format!(
                         "{} API 请求失败（所有凭据已用尽）: {} {}",
                         api_type,
                         status,
                         body
-                    );
+                    ))
+                    .into());
                 }
 
                 last_error = Some(anyhow::anyhow!(

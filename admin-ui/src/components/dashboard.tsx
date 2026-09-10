@@ -41,6 +41,10 @@ import {
   Loader2,
   ShieldAlert,
   ShieldX,
+  ShieldCheck,
+  SlidersHorizontal,
+  ExternalLink,
+  Info,
 } from "lucide-react";
 
 function GithubIcon({ className }: { className?: string }) {
@@ -95,7 +99,11 @@ import {
 import { detectTier, type Tier } from "@/components/subscription-badge";
 import { ProxyPoolDialog } from "@/components/proxy-pool-dialog";
 import { ImageUpdateDialog } from "@/components/image-update-dialog";
-import { AuditSuspendedDialog } from "@/components/audit-suspended-dialog";
+import {
+  AuditSuspendedDialog,
+  BanRulesTable,
+  navigateToBanSettings,
+} from "@/components/audit-suspended-dialog";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import {
   useCredentials,
@@ -105,6 +113,7 @@ import {
   useSetLoadBalancingMode,
   useResetAllSuccessCount,
   useSetPriority,
+  useSelfHealConfig,
 } from "@/hooks/use-credentials";
 import { useUpdateCheck } from "@/hooks/use-update-check";
 import { useFailureStats } from "@/hooks/use-traces";
@@ -294,6 +303,10 @@ export function Dashboard({ onLogout, embedded = false }: DashboardProps) {
   const [adminKeyDialogOpen, setAdminKeyDialogOpen] = useState(false);
   const [auditDialogOpen, setAuditDialogOpen] = useState(false);
   const [auditTargetIds, setAuditTargetIds] = useState<number[] | undefined>(undefined);
+  const [showBanRules, setShowBanRules] = useState(false);
+  const { data: selfHealConfig } = useSelfHealConfig();
+  const banCustomKeywords = selfHealConfig?.suspendedBanKeywords ?? [];
+  const isBanDetectionEnabled = selfHealConfig?.suspendedDetectionEnabled ?? true;
   const [newAdminKey, setNewAdminKey] = useState("");
   const [updatingAdminKey, setUpdatingAdminKey] = useState(false);
   const [showAdminKeyPlain, setShowAdminKeyPlain] = useState(false);
@@ -2250,6 +2263,74 @@ export function Dashboard({ onLogout, embedded = false }: DashboardProps) {
           </div>
         )}
 
+        {/* 封禁状态下的治理面板：无论是否有封禁账号，只要处于封禁筛选状态均默认显示 */}
+        {stateFilter === "suspended" && (
+          <div className="mb-4 rounded-xl border border-rose-500/25 bg-rose-500/[0.03] p-3.5 sm:p-4 text-xs shadow-xs space-y-3">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+              <div className="flex items-start gap-3 min-w-0">
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-rose-500/10 text-rose-500 border border-rose-500/20">
+                  <ShieldAlert className="h-4.5 w-4.5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-semibold text-sm text-foreground">账号封禁治理</span>
+                    <Badge variant="outline" className="border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400 font-mono text-[11px] px-1.5 py-0.5">
+                      {stateCounts.suspended} 个已封禁
+                    </Badge>
+                    <span className="text-[11px] text-muted-foreground flex items-center gap-1">
+                      <span className="h-1.5 w-1.5 rounded-full bg-rose-500 inline-block" />
+                      已隔离防自愈
+                    </span>
+                  </div>
+                  <p className="text-muted-foreground mt-0.5 text-xs leading-relaxed">
+                    基于上游官方风控响应特征扫描历史请求日志并精准匹配，将命中账号标记为「账号封禁」并永久排除出自动自愈。
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-8 px-2.5 text-xs gap-1.5 text-muted-foreground hover:text-foreground cursor-pointer"
+                  onClick={() => setShowBanRules((prev) => !prev)}
+                >
+                  <Info className="h-3.5 w-3.5" />
+                  <span>{showBanRules ? "收起规则" : "治理规则"}</span>
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-8 px-2.5 text-xs gap-1.5 text-muted-foreground hover:text-foreground cursor-pointer"
+                  onClick={navigateToBanSettings}
+                >
+                  <SlidersHorizontal className="h-3.5 w-3.5" />
+                  <span>配置规则</span>
+                  <ExternalLink className="h-2.5 w-2.5 opacity-60" />
+                </Button>
+                <Button
+                  size="sm"
+                  className="h-8 px-3 text-xs gap-1.5 bg-rose-600 hover:bg-rose-700 text-white font-medium shadow-xs cursor-pointer"
+                  onClick={() => handleAuditSuspended()}
+                >
+                  <ShieldX className="h-3.5 w-3.5" />
+                  排查封禁账号
+                </Button>
+              </div>
+            </div>
+
+            {showBanRules && (
+              <div className="pt-2 border-t border-rose-500/15 animate-in fade-in-50 duration-200">
+                <BanRulesTable
+                  customKeywords={banCustomKeywords}
+                  isDetectionEnabled={isBanDetectionEnabled}
+                  onNavigateToSettings={navigateToBanSettings}
+                />
+              </div>
+            )}
+          </div>
+        )}
+
         {/* 列表 */}
         {(data?.total ?? stateCounts.total) === 0 ? (
           <Card>
@@ -2263,62 +2344,71 @@ export function Dashboard({ onLogout, embedded = false }: DashboardProps) {
             </CardContent>
           </Card>
         ) : totalFilteredCount === 0 ? (
-          /*
-            有凭据但当前筛选下一个都不剩。默认筛「可用」时这很容易发生（全池超额
-            或全被禁用），此时说"暂无凭据，去添加"是假话 —— 凭据在，只是都不健康。
-            空态要说清真实情况，并给出下一步。
-          */
-          <Card>
-            <CardContent className="py-16 text-center">
-              <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-secondary text-muted-foreground">
-                <Server className="h-5 w-5" />
-              </div>
-              <p className="text-sm text-muted-foreground">
-                {stateFilter === "healthy" && stateCounts.total > 0
-                  ? `${stateCounts.total} 个凭据里没有可用的：冷却 ${stateCounts.throttled} · 超额 ${stateCounts.quota} · 禁用 ${stateCounts.dead} · 封禁 ${stateCounts.suspended}`
-                  : "当前筛选条件下没有凭据"}
-              </p>
-              <Button
-                size="sm"
-                variant="outline"
-                className="mt-3"
-                onClick={clearAllFilters}
-              >
-                显示全部凭据
-              </Button>
-            </CardContent>
-          </Card>
-        ) : (
-          <>
-          {stateFilter === "suspended" && (
-            <div className="mb-3 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 rounded-lg border border-rose-500/25 bg-rose-500/5 px-3.5 py-2.5 text-xs">
-              <div className="flex items-center gap-2.5 min-w-0">
-                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-rose-500/10 text-rose-500">
-                  <ShieldAlert className="h-4 w-4" />
+          stateFilter === "suspended" ? (
+            <Card className="border-dashed border-rose-500/30 bg-rose-500/[0.02]">
+              <CardContent className="py-10 px-4 sm:px-6 max-w-lg mx-auto text-center space-y-3">
+                <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-rose-500/10 text-rose-500 border border-rose-500/20">
+                  <ShieldCheck className="h-6 w-6" />
                 </div>
                 <div>
-                  <div className="flex items-center gap-2">
-                    <span className="font-semibold text-rose-600 dark:text-rose-400">封号特征日志治理</span>
-                    <span className="text-[10px] rounded bg-rose-500/10 px-1.5 py-0.5 font-mono text-rose-600 dark:text-rose-400">
-                      {stateCounts.suspended} 个已封禁
-                    </span>
-                  </div>
-                  <p className="text-muted-foreground mt-0.5 leading-snug">
-                    扫描历史请求日志中的封号特征并精准匹配，将命中账号标记为「账号封禁」并排除出自动自愈。
+                  <h3 className="text-sm font-semibold text-foreground">暂无已被标记为封禁的凭据</h3>
+                  <p className="mt-1 text-xs text-muted-foreground leading-relaxed">
+                    当前凭据池中未发现封禁账号。被标记为封禁的账号将自动隔离且绝不参与池自愈。你可以立即执行特征排查，扫描调用历史日志以检测并识别官方封禁凭据。
                   </p>
                 </div>
-              </div>
-              <Button
-                size="sm"
-                variant="outline"
-                className="h-7 px-3 text-xs gap-1.5 shrink-0 border-rose-500/30 text-rose-600 dark:text-rose-400 hover:bg-rose-500/10 hover:text-rose-700 dark:hover:text-rose-300 font-medium"
-                onClick={() => handleAuditSuspended()}
-              >
-                <ShieldX className="h-3.5 w-3.5" />
-                排查封禁账号
-              </Button>
-            </div>
-          )}
+                {!showBanRules && (
+                  <div className="text-left mt-2">
+                    <BanRulesTable
+                      customKeywords={banCustomKeywords}
+                      isDetectionEnabled={isBanDetectionEnabled}
+                      onNavigateToSettings={navigateToBanSettings}
+                    />
+                  </div>
+                )}
+                <div className="pt-2 flex flex-wrap items-center justify-center gap-2.5">
+                  <Button
+                    size="sm"
+                    className="bg-rose-600 hover:bg-rose-700 text-white font-medium gap-1.5 shadow-xs cursor-pointer"
+                    onClick={() => handleAuditSuspended()}
+                  >
+                    <ShieldX className="h-3.5 w-3.5" />
+                    立即排查封禁账号
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="cursor-pointer"
+                    onClick={clearAllFilters}
+                  >
+                    显示全部凭据
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          ) : (
+            <Card>
+              <CardContent className="py-16 text-center">
+                <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-secondary text-muted-foreground">
+                  <Server className="h-5 w-5" />
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  {stateFilter === "healthy" && stateCounts.total > 0
+                    ? `${stateCounts.total} 个凭据里没有可用的：冷却 ${stateCounts.throttled} · 超额 ${stateCounts.quota} · 禁用 ${stateCounts.dead} · 封禁 ${stateCounts.suspended}`
+                    : "当前筛选条件下没有凭据"}
+                </p>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="mt-3"
+                  onClick={clearAllFilters}
+                >
+                  显示全部凭据
+                </Button>
+              </CardContent>
+            </Card>
+          )
+        ) : (
+          <>
           <div id="dashboard-credentials">
             <DndContext
               sensors={dragSensors}

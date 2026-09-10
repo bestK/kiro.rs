@@ -28,6 +28,194 @@ import type { CredentialStatusItem } from "@/types/api";
 import { extractErrorMessage, cn } from "@/lib/utils";
 import { toast } from "sonner";
 
+// 跳转到设置页的调度分区中的「账号封禁治理」配置模块
+export function navigateToBanSettings() {
+  const targetHash = "#/settings?s=dispatch";
+  if (window.location.hash !== targetHash) {
+    window.location.hash = targetHash;
+    window.dispatchEvent(new Event("hashchange"));
+  }
+  // 等待设置页渲染后平滑滚动到账号封禁治理卡片并给予视觉聚焦
+  let attempts = 0;
+  const maxAttempts = 25;
+  const checkAndScroll = () => {
+    const el = document.getElementById("dispatch-ban-detect");
+    if (el) {
+      const main = document.querySelector("main");
+      if (main) {
+        const mainRect = main.getBoundingClientRect();
+        const elRect = el.getBoundingClientRect();
+        const targetScrollTop = main.scrollTop + (elRect.top - mainRect.top) - 20;
+        main.scrollTo({
+          top: Math.max(0, targetScrollTop),
+          behavior: "smooth",
+        });
+      } else {
+        el.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+      const targetCard =
+        (el.matches('section, [class*="rounded-xl"], [class*="rounded-lg"]')
+          ? el
+          : el.querySelector<HTMLElement>('section, [class*="rounded-xl"], [class*="rounded-lg"]')) || el;
+      document.querySelectorAll('.target-card-highlight').forEach((node) => {
+        node.classList.remove('target-card-highlight');
+      });
+      void targetCard.offsetWidth;
+      targetCard.classList.add('target-card-highlight');
+      setTimeout(() => {
+        targetCard.classList.remove('target-card-highlight');
+      }, 2400);
+    } else if (attempts < maxAttempts) {
+      attempts++;
+      setTimeout(checkAndScroll, 50);
+    }
+  };
+  setTimeout(checkAndScroll, 60);
+}
+
+export interface BanRulesTableProps {
+  customKeywords?: string[];
+  isDetectionEnabled?: boolean;
+  onNavigateToSettings?: () => void;
+  className?: string;
+}
+
+export function BanRulesTable({
+  customKeywords = [],
+  isDetectionEnabled = true,
+  onNavigateToSettings,
+  className,
+}: BanRulesTableProps) {
+  return (
+    <div className={cn("rounded-lg border border-border/70 bg-muted/20 p-3.5 space-y-2.5", className)}>
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-1.5 font-semibold text-foreground text-xs">
+          <Info className="h-3.5 w-3.5 text-muted-foreground" />
+          特征匹配与治理规则表
+        </div>
+        {onNavigateToSettings && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-6 px-2 text-[11px] gap-1 text-muted-foreground hover:text-foreground border-border/80 hover:bg-accent/60 cursor-pointer shadow-none"
+            onClick={onNavigateToSettings}
+          >
+            <SlidersHorizontal className="h-3 w-3" />
+            <span>管理特征规则</span>
+            <ExternalLink className="h-2.5 w-2.5 opacity-60" />
+          </Button>
+        )}
+      </div>
+
+      <div className="rounded-md border border-border/70 overflow-hidden bg-background">
+        <table className="w-full text-left text-xs border-collapse">
+          <thead>
+            <tr className="border-b border-border/60 bg-muted/40 text-muted-foreground text-[10.5px]">
+              <th className="py-2 px-2.5 font-medium w-16">来源</th>
+              <th className="py-2 px-2.5 font-medium">匹配特征 / 关键词</th>
+              <th className="py-2 px-2.5 font-medium w-28 text-right">匹配模式</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border/40 text-[11px]">
+            {/* 内置规则 1 */}
+            <tr className="hover:bg-muted/20">
+              <td className="py-2 px-2.5">
+                <Badge variant="outline" className="border-rose-500/30 text-rose-600 dark:text-rose-400 bg-rose-500/10 text-[9.5px] px-1 py-0 font-medium">
+                  内置
+                </Badge>
+              </td>
+              <td className="py-2 px-2.5">
+                <code className="font-mono text-[10.5px] text-rose-600 dark:text-rose-400 font-semibold truncate block max-w-[220px]">
+                  reason = "TEMPORARILY_SUSPENDED"
+                </code>
+              </td>
+              <td className="py-2 px-2.5 text-right text-[10.5px] text-muted-foreground">
+                结构化字段精确
+              </td>
+            </tr>
+
+            {/* 内置规则 2 */}
+            <tr className="hover:bg-muted/20">
+              <td className="py-2 px-2.5">
+                <Badge variant="outline" className="border-rose-500/30 text-rose-600 dark:text-rose-400 bg-rose-500/10 text-[9.5px] px-1 py-0 font-medium">
+                  内置
+                </Badge>
+              </td>
+              <td className="py-2 px-2.5 font-mono text-[10.5px] text-foreground">
+                "suspended" + ("locked your account" | "locked it")
+              </td>
+              <td className="py-2 px-2.5 text-right text-[10.5px] text-muted-foreground">
+                双短语交叉组合
+              </td>
+            </tr>
+
+            {/* 自定义关键词 */}
+            {customKeywords.length > 0 ? (
+              customKeywords.map((kw, idx) => (
+                <tr key={idx} className="hover:bg-muted/20">
+                  <td className="py-2 px-2.5">
+                    <Badge variant="secondary" className="text-[9.5px] px-1 py-0 font-normal">
+                      自定义
+                    </Badge>
+                  </td>
+                  <td className="py-2 px-2.5 font-mono text-[10.5px] text-foreground font-medium truncate max-w-[220px]">
+                    "{kw}"
+                  </td>
+                  <td className="py-2 px-2.5 text-right text-[10.5px] text-muted-foreground">
+                    响应文本子串
+                  </td>
+                </tr>
+              ))
+            ) : (
+              <tr className="hover:bg-muted/20">
+                <td className="py-2 px-2.5">
+                  <Badge variant="secondary" className="text-[9.5px] px-1 py-0 font-normal text-muted-foreground">
+                    自定义
+                  </Badge>
+                </td>
+                <td className="py-2 px-2.5 text-muted-foreground text-[10.5px]" colSpan={2}>
+                  暂无自定义关键词，
+                  {onNavigateToSettings ? (
+                    <button
+                      type="button"
+                      onClick={onNavigateToSettings}
+                      className="text-primary hover:underline font-medium cursor-pointer ml-1 inline-flex items-center"
+                    >
+                      前往设置添加 <ExternalLink className="h-2.5 w-2.5 ml-0.5" />
+                    </button>
+                  ) : (
+                    <span className="ml-1">可在设置页中添加</span>
+                  )}
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="text-[11px] text-muted-foreground leading-snug">
+        治理动作：命中的账号将被自动标记为「账号封禁」并隔离，绝不参与池全灭时的自愈复活。
+      </div>
+
+      {!isDetectionEnabled && (
+        <div className="flex items-center justify-between text-[11px] bg-amber-500/10 border border-amber-500/25 text-amber-700 dark:text-amber-400 px-2.5 py-1.5 rounded-md mt-1">
+          <span>⚠️ 提示：系统设置中「封号识别」当前已关闭</span>
+          {onNavigateToSettings && (
+            <button
+              type="button"
+              onClick={onNavigateToSettings}
+              className="font-medium underline hover:text-amber-800 dark:hover:text-amber-300 ml-2 shrink-0 cursor-pointer"
+            >
+              前往开启
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export interface AuditSuspendedDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -109,50 +297,9 @@ export function AuditSuspendedDialog({
   const customKeywords = selfHealConfig?.suspendedBanKeywords ?? [];
   const isDetectionEnabled = selfHealConfig?.suspendedDetectionEnabled ?? true;
 
-  // 跳转到设置页的调度分区中的「账号封禁治理」配置模块
   const handleNavigateToBanSettings = () => {
     handleClose();
-    const targetHash = "#/settings?s=dispatch";
-    if (window.location.hash !== targetHash) {
-      window.location.hash = targetHash;
-      window.dispatchEvent(new Event("hashchange"));
-    }
-    // 等待设置页渲染后平滑滚动到账号封禁治理卡片并给予视觉聚焦
-    let attempts = 0;
-    const maxAttempts = 25;
-    const checkAndScroll = () => {
-      const el = document.getElementById("dispatch-ban-detect");
-      if (el) {
-        const main = document.querySelector("main");
-        if (main) {
-          const mainRect = main.getBoundingClientRect();
-          const elRect = el.getBoundingClientRect();
-          const targetScrollTop = main.scrollTop + (elRect.top - mainRect.top) - 20;
-          main.scrollTo({
-            top: Math.max(0, targetScrollTop),
-            behavior: "smooth",
-          });
-        } else {
-          el.scrollIntoView({ behavior: "smooth", block: "start" });
-        }
-        const targetCard =
-          (el.matches('section, [class*="rounded-xl"], [class*="rounded-lg"]')
-            ? el
-            : el.querySelector<HTMLElement>('section, [class*="rounded-xl"], [class*="rounded-lg"]')) || el;
-        document.querySelectorAll('.target-card-highlight').forEach((node) => {
-          node.classList.remove('target-card-highlight');
-        });
-        void targetCard.offsetWidth;
-        targetCard.classList.add('target-card-highlight');
-        setTimeout(() => {
-          targetCard.classList.remove('target-card-highlight');
-        }, 2400);
-      } else if (attempts < maxAttempts) {
-        attempts++;
-        setTimeout(checkAndScroll, 50);
-      }
-    };
-    setTimeout(checkAndScroll, 60);
+    navigateToBanSettings();
   };
 
   // 根据 ID 查找邮箱或备注
@@ -478,124 +625,11 @@ export function AuditSuspendedDialog({
               </div>
 
               {/* 特征匹配与治理规则表格 */}
-              <div className="rounded-lg border border-border/70 bg-muted/20 p-3.5 space-y-2.5">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-1.5 font-semibold text-foreground text-xs">
-                    <Info className="h-3.5 w-3.5 text-muted-foreground" />
-                    特征匹配与治理规则表
-                  </div>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="h-6 px-2 text-[11px] gap-1 text-muted-foreground hover:text-foreground border-border/80 hover:bg-accent/60 cursor-pointer shadow-none"
-                    onClick={handleNavigateToBanSettings}
-                  >
-                    <SlidersHorizontal className="h-3 w-3" />
-                    <span>管理特征规则</span>
-                    <ExternalLink className="h-2.5 w-2.5 opacity-60" />
-                  </Button>
-                </div>
-
-                <div className="rounded-md border border-border/70 overflow-hidden bg-background">
-                  <table className="w-full text-left text-xs border-collapse">
-                    <thead>
-                      <tr className="border-b border-border/60 bg-muted/40 text-muted-foreground text-[10.5px]">
-                        <th className="py-2 px-2.5 font-medium w-16">来源</th>
-                        <th className="py-2 px-2.5 font-medium">匹配特征 / 关键词</th>
-                        <th className="py-2 px-2.5 font-medium w-28 text-right">匹配模式</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-border/40 text-[11px]">
-                      {/* 内置规则 1 */}
-                      <tr className="hover:bg-muted/20">
-                        <td className="py-2 px-2.5">
-                          <Badge variant="outline" className="border-rose-500/30 text-rose-600 dark:text-rose-400 bg-rose-500/10 text-[9.5px] px-1 py-0 font-medium">
-                            内置
-                          </Badge>
-                        </td>
-                        <td className="py-2 px-2.5">
-                          <code className="font-mono text-[10.5px] text-rose-600 dark:text-rose-400 font-semibold truncate block max-w-[220px]">
-                            reason = "TEMPORARILY_SUSPENDED"
-                          </code>
-                        </td>
-                        <td className="py-2 px-2.5 text-right text-[10.5px] text-muted-foreground">
-                          结构化字段精确
-                        </td>
-                      </tr>
-
-                      {/* 内置规则 2 */}
-                      <tr className="hover:bg-muted/20">
-                        <td className="py-2 px-2.5">
-                          <Badge variant="outline" className="border-rose-500/30 text-rose-600 dark:text-rose-400 bg-rose-500/10 text-[9.5px] px-1 py-0 font-medium">
-                            内置
-                          </Badge>
-                        </td>
-                        <td className="py-2 px-2.5 font-mono text-[10.5px] text-foreground">
-                          "suspended" + ("locked your account" | "locked it")
-                        </td>
-                        <td className="py-2 px-2.5 text-right text-[10.5px] text-muted-foreground">
-                          双短语交叉组合
-                        </td>
-                      </tr>
-
-                      {/* 自定义关键词 */}
-                      {customKeywords.length > 0 ? (
-                        customKeywords.map((kw, idx) => (
-                          <tr key={idx} className="hover:bg-muted/20">
-                            <td className="py-2 px-2.5">
-                              <Badge variant="secondary" className="text-[9.5px] px-1 py-0 font-normal">
-                                自定义
-                              </Badge>
-                            </td>
-                            <td className="py-2 px-2.5 font-mono text-[10.5px] text-foreground font-medium truncate max-w-[220px]">
-                              "{kw}"
-                            </td>
-                            <td className="py-2 px-2.5 text-right text-[10.5px] text-muted-foreground">
-                              响应文本子串
-                            </td>
-                          </tr>
-                        ))
-                      ) : (
-                        <tr className="hover:bg-muted/20">
-                          <td className="py-2 px-2.5">
-                            <Badge variant="secondary" className="text-[9.5px] px-1 py-0 font-normal text-muted-foreground">
-                              自定义
-                            </Badge>
-                          </td>
-                          <td className="py-2 px-2.5 text-muted-foreground text-[10.5px]" colSpan={2}>
-                            暂无自定义关键词，
-                            <button
-                              type="button"
-                              onClick={handleNavigateToBanSettings}
-                              className="text-primary hover:underline font-medium cursor-pointer ml-1 inline-flex items-center"
-                            >
-                              前往设置添加 <ExternalLink className="h-2.5 w-2.5 ml-0.5" />
-                            </button>
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-
-                <div className="text-[11px] text-muted-foreground leading-snug">
-                  治理动作：命中的账号将被自动标记为「账号封禁」并隔离，绝不参与池全灭时的自愈复活。
-                </div>
-
-                {!isDetectionEnabled && (
-                  <div className="flex items-center justify-between text-[11px] bg-amber-500/10 border border-amber-500/25 text-amber-700 dark:text-amber-400 px-2.5 py-1.5 rounded-md mt-1">
-                    <span>⚠️ 提示：系统设置中「封号识别」当前已关闭</span>
-                    <button
-                      type="button"
-                      onClick={handleNavigateToBanSettings}
-                      className="font-medium underline hover:text-amber-800 dark:hover:text-amber-300 ml-2 shrink-0 cursor-pointer"
-                    >
-                      前往开启
-                    </button>
-                  </div>
-                )}
-              </div>
+              <BanRulesTable
+                customKeywords={customKeywords}
+                isDetectionEnabled={isDetectionEnabled}
+                onNavigateToSettings={handleNavigateToBanSettings}
+              />
             </div>
           )}
         </div>

@@ -14,6 +14,7 @@ use super::{
         check_proxy, check_rate_limit, check_update, clear_throttle, complete_social_login,
         complete_social_relogin, create_client_key, create_group, delete_client_key,
         delete_credential, delete_group, delete_proxy, disable_quota_exceeded, enable_overage_all,
+        audit_suspended_credentials,
         export_credentials, force_refresh_token, get_account_rpm_limit_config,
         get_account_throttle_config, get_all_credentials,
         get_credential_balance, get_credential_metadata_schema, get_credential_models,
@@ -90,6 +91,10 @@ pub fn create_admin_router(state: AdminState) -> Router {
         .route(
             "/credentials/disable-quota-exceeded",
             post(disable_quota_exceeded),
+        )
+        .route(
+            "/credentials/audit-suspended",
+            post(audit_suspended_credentials),
         )
         .route("/credentials/overage/enable-all", post(enable_overage_all))
         .route("/credentials/{id}/overage", post(set_credential_overage))

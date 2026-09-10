@@ -327,15 +327,15 @@ function getDisabledReasonStyle(reason?: string | null): {
     case "QuotaExceeded":
       return { label: "已超额", variant: "warning" };
     case "TooManyFailures":
-      return { label: "失败过多", variant: "destructive" };
+      return { label: "失败过多", variant: "secondary" };
     case "Suspended":
       return { label: "账号封禁", variant: "destructive" };
     case "TooManyRefreshFailures":
-      return { label: "刷新失败过多", variant: "destructive" };
+      return { label: "刷新失败过多", variant: "secondary" };
     case "InvalidRefreshToken":
-      return { label: "Token 失效", variant: "destructive" };
+      return { label: "Token 失效", variant: "secondary" };
     case "InvalidConfig":
-      return { label: "配置无效", variant: "destructive" };
+      return { label: "配置无效", variant: "secondary" };
     case "Manual":
       return { label: "手动禁用", variant: "secondary" };
     default:
@@ -619,9 +619,32 @@ function CredentialCardImpl({
         (disposition.action === "refreshToken" && forceRefresh.isPending)
       }
       title={`${disposition.stateLabel} → ${disposition.actionLabel}`}
-      className="h-7 whitespace-nowrap px-3 text-xs font-medium border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300 hover:bg-amber-500/20"
+      className={cn(
+        "h-7 whitespace-nowrap px-2.5 text-xs font-medium border transition-colors",
+        disposition.state === "suspended"
+          ? "border-rose-500/40 bg-rose-500/10 text-rose-700 dark:text-rose-400 hover:bg-rose-500/20"
+          : disposition.action === "enable"
+            ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-500/20"
+            : disposition.action === "viewFailures"
+              ? "border-border bg-muted/60 text-muted-foreground hover:bg-muted hover:text-foreground"
+              : disposition.action === "clearThrottle"
+                ? "border-orange-500/40 bg-orange-500/10 text-orange-700 dark:text-orange-300 hover:bg-orange-500/20"
+                : "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300 hover:bg-amber-500/20"
+      )}
     >
-      <Sparkles className="mr-1 h-3 w-3" />
+      {disposition.state === "suspended" || disposition.action === "relogin" ? (
+        <LogIn className="mr-1 h-3 w-3" />
+      ) : disposition.action === "enable" ? (
+        <Zap className="mr-1 h-3 w-3" />
+      ) : disposition.action === "viewFailures" ? (
+        <ScrollText className="mr-1 h-3 w-3" />
+      ) : disposition.action === "clearThrottle" ? (
+        <RotateCcw className="mr-1 h-3 w-3" />
+      ) : disposition.action === "viewBalance" ? (
+        <Wallet className="mr-1 h-3 w-3" />
+      ) : (
+        <Sparkles className="mr-1 h-3 w-3" />
+      )}
       {disposition.actionLabel}
     </Button>
   ) : null;
@@ -635,7 +658,9 @@ function CredentialCardImpl({
     isThrottled
       ? "ring-1 ring-orange-500/60 bg-orange-50/40 dark:bg-orange-500/[0.04]"
       : "",
-    credential.disabled && !disabledByQuota ? "opacity-75" : "",
+    credential.disabled && credential.disabledReason === "Suspended"
+      ? "hover:border-rose-500/40"
+      : "",
   ]
     .filter(Boolean)
     .join(" ");
@@ -644,12 +669,21 @@ function CredentialCardImpl({
   const statusBadges = (
     <>
       {credential.disabled && reasonStyle && (
-        <Badge variant={reasonStyle.variant} className="text-[11px]">
-          已禁用 · {reasonStyle.label}
+        <Badge
+          variant={reasonStyle.variant}
+          className={cn(
+            "text-[11px]",
+            credential.disabledReason === "Suspended" &&
+              "border-rose-500/40 bg-rose-500/15 text-rose-700 dark:text-rose-400 font-semibold shadow-xs"
+          )}
+        >
+          {credential.disabledReason === "Suspended"
+            ? "已封禁 · 账号锁定"
+            : `已禁用 · ${reasonStyle.label}`}
         </Badge>
       )}
       {credential.disabled && !reasonStyle && (
-        <Badge variant="destructive" className="text-[11px]">已禁用</Badge>
+        <Badge variant="secondary" className="text-[11px]">已禁用</Badge>
       )}
       {!credential.disabled && isQuotaExceeded && (
         <Badge variant="warning" className="text-[11px]">已超额</Badge>
@@ -1055,15 +1089,12 @@ function CredentialCardImpl({
           onClick={handleForceRefresh}
           disabled={
             forceRefresh.isPending ||
-            credential.disabled ||
             credential.authMethod === "api_key"
           }
           title={
             credential.authMethod === "api_key"
               ? "API Key 无需刷新"
-              : credential.disabled
-                ? "已禁用"
-                : "强制刷新 Token"
+              : "强制刷新 Token"
           }
         >
           <RefreshCw
@@ -1075,8 +1106,8 @@ function CredentialCardImpl({
           variant="ghost"
           className={`h-8 w-8 ${dispositionButton ? "hidden" : "hidden sm:inline-flex"}`}
           onClick={handleRefreshBalanceClick}
-          disabled={loadingBalance || credential.disabled}
-          title={credential.disabled ? "已禁用" : "刷新余额"}
+          disabled={loadingBalance}
+          title="刷新余额"
         >
           {loadingBalance ? (
             <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -1088,7 +1119,13 @@ function CredentialCardImpl({
           checked={!credential.disabled}
           onCheckedChange={handleToggleDisabled}
           disabled={setDisabled.isPending}
-          title={credential.disabled ? "启用" : "禁用"}
+          title={
+            credential.disabledReason === "Suspended"
+              ? "账号已封禁 · 点击尝试启用"
+              : credential.disabled
+                ? "点击启用"
+                : "点击禁用"
+          }
           className="scale-90"
         />
         <Button
@@ -1151,7 +1188,13 @@ function CredentialCardImpl({
                   checked={!credential.disabled}
                   onCheckedChange={handleToggleDisabled}
                   disabled={preview || setDisabled.isPending}
-                  title={credential.disabled ? "点击启用" : "点击禁用"}
+                  title={
+                    credential.disabledReason === "Suspended"
+                      ? "账号已封禁 · 点击尝试启用"
+                      : credential.disabled
+                        ? "点击启用"
+                        : "点击禁用"
+                  }
                   className="scale-90"
                 />
               </div>
@@ -1508,15 +1551,12 @@ function CredentialCardImpl({
                   onClick={handleForceRefresh}
                   disabled={
                     forceRefresh.isPending ||
-                    credential.disabled ||
                     credential.authMethod === "api_key"
                   }
                   title={
                     credential.authMethod === "api_key"
                       ? "API Key 无需刷新"
-                      : credential.disabled
-                        ? "已禁用"
-                        : "强制刷新 Token"
+                      : "强制刷新 Token"
                   }
                 >
                   <RefreshCw
@@ -1528,8 +1568,8 @@ function CredentialCardImpl({
                   variant="ghost"
                   className="h-8 w-8 shrink-0 hover:bg-accent"
                   onClick={handleRefreshBalanceClick}
-                  disabled={loadingBalance || credential.disabled}
-                  title={credential.disabled ? "已禁用" : "刷新余额"}
+                  disabled={loadingBalance}
+                  title="刷新余额"
                 >
                   {loadingBalance ? (
                     <Loader2 className="h-4 w-4 animate-spin" />

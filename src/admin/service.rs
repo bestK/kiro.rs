@@ -37,7 +37,7 @@ use super::proxy_pool::{GetUrlResult, ProxyPoolManager};
 use super::types::{
     AccountRpmLimitConfigResponse, AccountThrottleConfigResponse, AddCredentialRequest,
     AddCredentialResponse, AssignProxyRequest,
-    AssignRoundRobinResponse, AvailableModelItem, AvailableModelsResponse, BalanceResponse,
+    AssignRoundRobinResponse, AuditSuspendedRequest, AuditSuspendedResponse, AvailableModelItem, AvailableModelsResponse, BalanceResponse,
     BatchAddProxyRequest, BatchImportEvent, CheckRateLimitRequest, CredentialMetadataDetail,
     CredentialStatusItem, CredentialStateCounts,
     CredentialsExportResponse, CredentialsQuery, CredentialsStatusResponse, CustomHeadersConfigResponse,
@@ -1758,6 +1758,7 @@ impl AdminService {
         let mut throttled_count = 0;
         let mut quota_count = 0;
         let mut dead_count = 0;
+        let mut suspended_count = 0;
         for c in &credentials {
             let is_overage = c
                 .balance
@@ -1770,7 +1771,13 @@ impl AdminService {
                         .unwrap_or(false)
                 });
             if c.disabled {
-                dead_count += 1;
+                if c.disabled_reason.as_deref() == Some("Suspended") {
+                    suspended_count += 1;
+                } else if is_overage {
+                    quota_count += 1;
+                } else {
+                    dead_count += 1;
+                }
             } else if c.throttled_remaining_secs.unwrap_or(0) > 0 {
                 throttled_count += 1;
             } else if is_overage {
@@ -1784,6 +1791,7 @@ impl AdminService {
             throttled: throttled_count,
             quota: quota_count,
             dead: dead_count,
+            suspended: suspended_count,
             total: credentials.len(),
         };
 
@@ -1827,7 +1835,7 @@ impl AdminService {
                     }
                 }
 
-                // 状态过滤 (healthy / available, cooling / throttled, disabled, overage)
+                // 状态过滤 (healthy / available, cooling / throttled, disabled, overage, suspended)
                 if let Some(status) = query.effective_status() {
                     let is_overage = c
                         .balance
@@ -1855,8 +1863,13 @@ impl AdminService {
                                 return false;
                             }
                         }
+                        "suspended" => {
+                            if !c.disabled || c.disabled_reason.as_deref() != Some("Suspended") {
+                                return false;
+                            }
+                        }
                         "disabled" | "dead" => {
-                            if !c.disabled {
+                            if !c.disabled || c.disabled_reason.as_deref() == Some("Suspended") || is_overage {
                                 return false;
                             }
                         }
@@ -2130,6 +2143,89 @@ impl AdminService {
             disabled_ids,
             skipped_ids,
         }
+    }
+
+    /// 通过历史请求日志排查封号凭据并标记为 Suspended
+    pub fn audit_suspended_credentials(
+        &self,
+        req: Option<AuditSuspendedRequest>,
+    ) -> Result<AuditSuspendedResponse, AdminServiceError> {
+        let trace_store = self.trace_store.as_ref().ok_or_else(|| {
+            AdminServiceError::InternalError("未启用链路追踪存储，无法查询历史日志".to_string())
+        })?;
+
+        let req = req.unwrap_or_default();
+        let only_disabled = req.only_disabled.unwrap_or(true);
+
+        // 确定待扫描的目标凭据候选集合
+        let snapshot = self.token_manager.snapshot();
+        let candidate_creds: HashSet<u64> = if let Some(ids) = req.credential_ids.filter(|l| !l.is_empty()) {
+            ids.into_iter().collect()
+        } else if only_disabled {
+            snapshot
+                .entries
+                .iter()
+                .filter(|e| e.disabled)
+                .map(|e| e.id)
+                .collect()
+        } else {
+            snapshot.entries.iter().map(|e| e.id).collect()
+        };
+
+        let scanned_count = candidate_creds.len();
+        if candidate_creds.is_empty() {
+            return Ok(AuditSuspendedResponse {
+                scanned_count: 0,
+                banned_count: 0,
+                updated_count: 0,
+                updated_ids: Vec::new(),
+                banned_ids: Vec::new(),
+            });
+        }
+
+        // 从 trace 存储拉取各凭据的错误日志与结果分类
+        let error_logs = trace_store.query_credential_error_logs();
+
+        // 匹配封号检查逻辑
+        let mut banned_ids: HashSet<u64> = HashSet::new();
+        for (cred_id, outcome, snippet) in error_logs {
+            if !candidate_creds.contains(&cred_id) {
+                continue;
+            }
+            let is_banned = outcome == crate::admin::trace_db::outcome::ACCOUNT_SUSPENDED
+                || snippet.as_deref().map_or(false, |body| {
+                    crate::kiro::endpoint::default_is_account_suspended(body)
+                        || self.token_manager.matches_suspended_ban_keywords(body)
+                });
+            if is_banned {
+                banned_ids.insert(cred_id);
+            }
+        }
+
+        let banned_count = banned_ids.len();
+        let banned_vec: Vec<u64> = banned_ids.into_iter().collect();
+
+        // 批量更新为 Suspended 并持久化
+        let updated_ids = self
+            .token_manager
+            .batch_mark_suspended(&banned_vec)
+            .map_err(|e| AdminServiceError::InternalError(e.to_string()))?;
+        let updated_count = updated_ids.len();
+
+        tracing::info!(
+            "历史日志排查封号完成: 扫描 {} 个凭据，命中 {} 个封号特征，新标记 {} 个凭据为 Suspended",
+            scanned_count,
+            banned_count,
+            updated_count
+        );
+
+        Ok(AuditSuspendedResponse {
+            scanned_count,
+            banned_count,
+            updated_count,
+            updated_ids,
+            banned_ids: banned_vec,
+        })
     }
 
     /// 设置凭据禁用状态
@@ -3918,6 +4014,7 @@ impl AdminService {
         ) = self.token_manager.get_self_heal_config();
         SelfHealConfigResponse {
             suspended_detection_enabled,
+            suspended_ban_keywords: self.token_manager.get_suspended_ban_keywords(),
             enabled,
             min_interval_secs,
             max_consecutive_rounds,
@@ -3932,12 +4029,13 @@ impl AdminService {
         req: SetSelfHealConfigRequest,
     ) -> Result<SelfHealConfigResponse, AdminServiceError> {
         if req.suspended_detection_enabled.is_none()
+            && req.suspended_ban_keywords.is_none()
             && req.enabled.is_none()
             && req.min_interval_secs.is_none()
             && req.max_consecutive_rounds.is_none()
         {
             return Err(AdminServiceError::InvalidCredential(
-                "至少提供 suspendedDetectionEnabled / enabled / minIntervalSecs / maxConsecutiveRounds 一个字段"
+                "至少提供 suspendedDetectionEnabled / suspendedBanKeywords / enabled / minIntervalSecs / maxConsecutiveRounds 一个字段"
                     .to_string(),
             ));
         }
@@ -3945,6 +4043,7 @@ impl AdminService {
         self.token_manager
             .set_self_heal_config(
                 req.suspended_detection_enabled,
+                req.suspended_ban_keywords,
                 req.enabled,
                 req.min_interval_secs,
                 req.max_consecutive_rounds,

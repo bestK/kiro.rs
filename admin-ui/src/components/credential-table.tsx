@@ -70,6 +70,7 @@ import { CredentialFailuresDialog } from "@/components/credential-failures-dialo
 import { AvailableModelsDialog } from "@/components/available-models-dialog";
 import { BalanceDialog } from "@/components/balance-dialog";
 import { getDisposition } from "@/components/console/credential-state";
+import { railBorderClass } from "@/components/console/rail";
 import { CredentialLabel } from "@/components/console/credential-label";
 
 interface CredentialTableProps {
@@ -544,11 +545,16 @@ function CredentialTableRowComponent({
           "group transition-colors h-[48px]",
           selected ? "bg-primary/6 dark:bg-primary/10" : "hover:bg-muted/40",
           isDragging && "opacity-75 bg-muted/60 shadow-md",
-          credential.disabled && "opacity-60 bg-muted/20",
+          credential.disabled && "bg-muted/10",
         )}
       >
         {/* Checkbox / Drag Handle / ID */}
-        <td className="py-1.5 pl-3 pr-1 text-center whitespace-nowrap">
+        <td
+          className={cn(
+            "py-1.5 pl-3 pr-1 text-center whitespace-nowrap",
+            railBorderClass(disposition.tone)
+          )}
+        >
           <div className="flex items-center justify-center gap-1">
             {!dragDisabled && !preview && (
               <button
@@ -621,11 +627,33 @@ function CredentialTableRowComponent({
           <div className="flex flex-col gap-0.5">
             <div>
               {credential.disabled ? (
-                <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 border-muted-foreground/30 text-muted-foreground bg-muted/40 font-normal">
-                  已禁用
-                </Badge>
+                credential.disabledReason === "Suspended" ? (
+                  <Badge
+                    variant="destructive"
+                    className="text-[10px] px-1.5 py-0 h-4 border-rose-500/30 bg-rose-500/15 text-rose-700 dark:text-rose-400 font-semibold"
+                  >
+                    已封禁
+                  </Badge>
+                ) : credential.disabledReason === "QuotaExceeded" ? (
+                  <Badge
+                    variant="warning"
+                    className="text-[10px] px-1.5 py-0 h-4"
+                  >
+                    已超额
+                  </Badge>
+                ) : (
+                  <Badge
+                    variant="secondary"
+                    className="text-[10px] px-1.5 py-0 h-4 font-normal"
+                  >
+                    已禁用
+                  </Badge>
+                )
               ) : isThrottled ? (
-                <Badge variant="destructive" className="text-[10px] px-1.5 py-0 h-4 font-mono animate-pulse">
+                <Badge
+                  variant="warning"
+                  className="text-[10px] px-1.5 py-0 h-4 font-mono animate-pulse bg-orange-500/15 text-orange-700 dark:text-orange-400 border-orange-500/30"
+                >
                   429 风控
                 </Badge>
               ) : credential.failureCount > 0 ? (
@@ -641,16 +669,25 @@ function CredentialTableRowComponent({
 
             <div className="text-[10px] font-mono text-muted-foreground truncate">
               {isThrottled ? (
-                <span className="text-amber-600 dark:text-amber-400 font-medium">
+                <span className="text-orange-600 dark:text-orange-400 font-medium">
                   冷却 {throttleRemaining}s
                 </span>
               ) : credential.disabled ? (
-                <span title={credential.disabledReason}>
+                <span
+                  title={credential.disabledReason}
+                  className={credential.disabledReason === "Suspended" ? "text-rose-600 dark:text-rose-400 font-medium" : ""}
+                >
                   {credential.disabledReason === "QuotaExceeded"
                     ? "超额禁用"
-                    : credential.disabledReason === "Manual"
-                      ? "手动禁用"
-                      : credential.disabledReason || "原因未知"}
+                    : credential.disabledReason === "Suspended"
+                      ? "账号锁定"
+                      : credential.disabledReason === "TooManyFailures"
+                        ? "失败过多"
+                        : credential.disabledReason === "Manual"
+                          ? "手动禁用"
+                          : credential.disabledReason === "InvalidRefreshToken"
+                            ? "Token失效"
+                            : credential.disabledReason || "原因未知"}
                 </span>
               ) : (
                 <span className="text-emerald-600/80 dark:text-emerald-400/80">
@@ -900,15 +937,12 @@ function CredentialTableRowComponent({
               onClick={handleForceRefresh}
               disabled={
                 forceRefresh.isPending ||
-                credential.disabled ||
                 credential.authMethod === "api_key"
               }
               title={
                 credential.authMethod === "api_key"
                   ? "API Key 无需刷新"
-                  : credential.disabled
-                    ? "已禁用"
-                    : "强制刷新 Token"
+                  : "强制刷新 Token"
               }
             >
               <RefreshCw
@@ -922,8 +956,8 @@ function CredentialTableRowComponent({
               variant="ghost"
               className="h-7 w-7 text-muted-foreground hover:text-foreground"
               onClick={handleRefreshBalanceClick}
-              disabled={loadingBalance || credential.disabled}
-              title={credential.disabled ? "已禁用" : "刷新余额"}
+              disabled={loadingBalance}
+              title="刷新余额"
             >
               {loadingBalance ? (
                 <Loader2 className="h-3 w-3 animate-spin" />
@@ -948,7 +982,13 @@ function CredentialTableRowComponent({
               checked={!credential.disabled}
               onCheckedChange={handleToggleDisabled}
               disabled={preview || setDisabled.isPending}
-              title={credential.disabled ? "点击启用" : "点击禁用"}
+              title={
+                credential.disabledReason === "Suspended"
+                  ? "账号已封禁 · 点击尝试启用"
+                  : credential.disabled
+                    ? "点击启用"
+                    : "点击禁用"
+              }
               className="scale-75 origin-center"
             />
 

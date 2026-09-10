@@ -75,6 +75,8 @@ export function FloatingSectionNav({ items, className }: FloatingSectionNavProps
     }
   }, [items, setActiveSafe])
 
+  const highlightTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
   // 滚动监听绑定：采用 requestAnimationFrame 帧率对齐节流
   useEffect(() => {
     if (items.length === 0) return
@@ -120,6 +122,10 @@ export function FloatingSectionNav({ items, className }: FloatingSectionNavProps
         clearTimeout(scrollTimeoutRef.current)
         scrollTimeoutRef.current = null
       }
+      if (highlightTimeoutRef.current) {
+        clearTimeout(highlightTimeoutRef.current)
+        highlightTimeoutRef.current = null
+      }
       scrollTarget.removeEventListener('scroll', onScroll)
       window.removeEventListener('resize', onScroll)
       scrollTarget.removeEventListener('wheel', onUserInterrupt)
@@ -127,7 +133,7 @@ export function FloatingSectionNav({ items, className }: FloatingSectionNavProps
     }
   }, [items, updateActive])
 
-  // 点击平滑滚动：精准定位并加上滚动期间锁
+  // 点击平滑滚动：精准定位、加上滚动期间锁，并触发目标卡片特效边框提示
   const scrollTo = useCallback((id: string) => {
     const el = document.getElementById(id)
     if (!el) return
@@ -155,6 +161,21 @@ export function FloatingSectionNav({ items, className }: FloatingSectionNavProps
     } else {
       el.scrollIntoView({ behavior: 'smooth', block: 'start' })
     }
+
+    // 目标卡片特效边框提示：获取实际卡片容器，清空其他高亮，挂载 target-card-highlight 动画
+    const targetCard = getTargetCard(el)
+    document.querySelectorAll('.target-card-highlight').forEach((node) => {
+      node.classList.remove('target-card-highlight')
+    })
+    if (highlightTimeoutRef.current) {
+      clearTimeout(highlightTimeoutRef.current)
+    }
+    void targetCard.offsetWidth
+    targetCard.classList.add('target-card-highlight')
+    highlightTimeoutRef.current = setTimeout(() => {
+      targetCard.classList.remove('target-card-highlight')
+      highlightTimeoutRef.current = null
+    }, 2400)
   }, [setActiveSafe])
 
   if (items.length === 0) return null
@@ -217,3 +238,21 @@ export function FloatingSectionNav({ items, className }: FloatingSectionNavProps
   )
 }
 
+/**
+ * 递归解析要挂载高亮边框特效的主体卡片元素
+ * 若挂载 id 的元素是外层包装 div，则优先定位其内部真实的 card / section / 带圆角卡片
+ */
+function getTargetCard(el: HTMLElement): HTMLElement {
+  if (
+    el.tagName === 'SECTION' ||
+    el.tagName === 'ARTICLE' ||
+    el.classList.contains('card') ||
+    Array.from(el.classList).some((c) => c.startsWith('rounded-'))
+  ) {
+    return el
+  }
+  const inner = el.querySelector<HTMLElement>(
+    'section, article, [class*="rounded-xl"], [class*="rounded-2xl"], [class*="rounded-lg"], .card'
+  )
+  return inner || el
+}

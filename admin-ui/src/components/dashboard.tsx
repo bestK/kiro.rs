@@ -39,6 +39,8 @@ import {
   ArrowUp,
   ArrowDown,
   Loader2,
+  ShieldAlert,
+  ShieldX,
 } from "lucide-react";
 
 function GithubIcon({ className }: { className?: string }) {
@@ -93,6 +95,7 @@ import {
 import { detectTier, type Tier } from "@/components/subscription-badge";
 import { ProxyPoolDialog } from "@/components/proxy-pool-dialog";
 import { ImageUpdateDialog } from "@/components/image-update-dialog";
+import { AuditSuspendedDialog } from "@/components/audit-suspended-dialog";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import {
   useCredentials,
@@ -289,6 +292,8 @@ export function Dashboard({ onLogout, embedded = false }: DashboardProps) {
   const [proxyPoolDialogOpen, setProxyPoolDialogOpen] = useState(false);
   const [imageUpdateDialogOpen, setImageUpdateDialogOpen] = useState(false);
   const [adminKeyDialogOpen, setAdminKeyDialogOpen] = useState(false);
+  const [auditDialogOpen, setAuditDialogOpen] = useState(false);
+  const [auditTargetIds, setAuditTargetIds] = useState<number[] | undefined>(undefined);
   const [newAdminKey, setNewAdminKey] = useState("");
   const [updatingAdminKey, setUpdatingAdminKey] = useState(false);
   const [showAdminKeyPlain, setShowAdminKeyPlain] = useState(false);
@@ -418,7 +423,7 @@ export function Dashboard({ onLogout, embedded = false }: DashboardProps) {
     setSortDir(descByDefault.has(field) ? "desc" : "asc");
   };
   // 状态筛选：由顶部状态账条驱动。'' = 全部
-  const [stateFilter, setStateFilter] = useState<StateFilter>("healthy");
+  const [stateFilter, setStateFilter] = useState<StateFilter>("");
   const clearAllFilters = () => {
     setSearchQuery("");
     setGroupFilter("");
@@ -493,6 +498,7 @@ export function Dashboard({ onLogout, embedded = false }: DashboardProps) {
         throttled: data.stateCounts.throttled,
         quota: data.stateCounts.quota,
         dead: data.stateCounts.dead,
+        suspended: data.stateCounts.suspended ?? 0,
         total: data.stateCounts.total,
       };
     }
@@ -1297,6 +1303,12 @@ export function Dashboard({ onLogout, embedded = false }: DashboardProps) {
     } finally {
       setDisablingQuota(false);
     }
+  };
+
+  // 历史日志封号排查弹窗入口
+  const handleAuditSuspended = (targetIds?: number[]) => {
+    setAuditTargetIds(targetIds && targetIds.length > 0 ? targetIds : undefined);
+    setAuditDialogOpen(true);
   };
 
   // 一键开启超额：调用上游 setUserPreference 把所有"可开启且未开启"的凭据开启
@@ -2116,6 +2128,15 @@ export function Dashboard({ onLogout, embedded = false }: DashboardProps) {
                     一键超额禁用 ({quotaExceededCount})
                   </DropdownMenuItem>
                   <DropdownMenuItem
+                    onSelect={(e) => {
+                      e.preventDefault();
+                      handleAuditSuspended();
+                    }}
+                  >
+                    <ShieldAlert className="text-rose-500" />
+                    排查封禁账号
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
                     destructive
                     disabled={disabledCredentialCount === 0}
                     onSelect={(e) => {
@@ -2149,7 +2170,7 @@ export function Dashboard({ onLogout, embedded = false }: DashboardProps) {
           改哪个数字影响哪片区域。激活项的底边线用该状态的色轨色，与下方行的左侧色轨
           是同一个信号。
         */}
-        {(data?.credentials.length ?? 0) > 0 && (
+        {(data?.total ?? stateCounts.total) > 0 && (
           <div id="dashboard-status">
             <StatusStrip
               className="mb-2"
@@ -2189,10 +2210,18 @@ export function Dashboard({ onLogout, embedded = false }: DashboardProps) {
               {
                 label: "禁用",
                 count: stateCounts.dead,
-                tone: "dead",
+                tone: "disabled",
                 active: stateFilter === "dead",
                 onClick: () => setStateFilter("dead"),
-                hint: "鉴权失败 / 封禁 / 手动禁用，需要处置",
+                hint: "手动禁用 / 失败过多 / Token 失效，可尝试自愈或重置",
+              },
+              {
+                label: "封禁",
+                count: stateCounts.suspended,
+                tone: "banned",
+                active: stateFilter === "suspended",
+                onClick: () => setStateFilter("suspended"),
+                hint: "上游官方风控封号锁定（TEMPORARILY_SUSPENDED），不可自愈",
               },
             ]}
             trailing={
@@ -2222,7 +2251,7 @@ export function Dashboard({ onLogout, embedded = false }: DashboardProps) {
         )}
 
         {/* 列表 */}
-        {allCredentials.length === 0 ? (
+        {(data?.total ?? stateCounts.total) === 0 ? (
           <Card>
             <CardContent className="py-16 text-center">
               <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-secondary text-muted-foreground">
@@ -2246,7 +2275,7 @@ export function Dashboard({ onLogout, embedded = false }: DashboardProps) {
               </div>
               <p className="text-sm text-muted-foreground">
                 {stateFilter === "healthy" && stateCounts.total > 0
-                  ? `${stateCounts.total} 个凭据里没有可用的：冷却 ${stateCounts.throttled} · 超额 ${stateCounts.quota} · 禁用 ${stateCounts.dead}`
+                  ? `${stateCounts.total} 个凭据里没有可用的：冷却 ${stateCounts.throttled} · 超额 ${stateCounts.quota} · 禁用 ${stateCounts.dead} · 封禁 ${stateCounts.suspended}`
                   : "当前筛选条件下没有凭据"}
               </p>
               <Button
@@ -2261,6 +2290,35 @@ export function Dashboard({ onLogout, embedded = false }: DashboardProps) {
           </Card>
         ) : (
           <>
+          {stateFilter === "suspended" && (
+            <div className="mb-3 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 rounded-lg border border-rose-500/25 bg-rose-500/5 px-3.5 py-2.5 text-xs">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-rose-500/10 text-rose-500">
+                  <ShieldAlert className="h-4 w-4" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-semibold text-rose-600 dark:text-rose-400">封号特征日志治理</span>
+                    <span className="text-[10px] rounded bg-rose-500/10 px-1.5 py-0.5 font-mono text-rose-600 dark:text-rose-400">
+                      {stateCounts.suspended} 个已封禁
+                    </span>
+                  </div>
+                  <p className="text-muted-foreground mt-0.5 leading-snug">
+                    扫描历史请求日志中的封号特征并精准匹配，将命中账号标记为「账号封禁」并排除出自动自愈。
+                  </p>
+                </div>
+              </div>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 px-3 text-xs gap-1.5 shrink-0 border-rose-500/30 text-rose-600 dark:text-rose-400 hover:bg-rose-500/10 hover:text-rose-700 dark:hover:text-rose-300 font-medium"
+                onClick={() => handleAuditSuspended()}
+              >
+                <ShieldX className="h-3.5 w-3.5" />
+                排查封禁账号
+              </Button>
+            </div>
+          )}
           <div id="dashboard-credentials">
             <DndContext
               sensors={dragSensors}
@@ -2380,6 +2438,16 @@ export function Dashboard({ onLogout, embedded = false }: DashboardProps) {
               >
                 <RotateCcw className="h-3.5 w-3.5" />
                 恢复异常
+              </Button>
+              <Button
+                onClick={() => handleAuditSuspended(Array.from(selectedIds))}
+                size="sm"
+                variant="ghost"
+                className="h-7 px-2.5 text-xs gap-1 rounded hover:bg-accent text-rose-500 hover:text-rose-600 dark:hover:text-rose-400"
+                title="通过历史请求日志排查选中的凭据是否被封号"
+              >
+                <ShieldX className="h-3.5 w-3.5" />
+                排查封禁
               </Button>
               <Button
                 onClick={handleBatchDelete}
@@ -2661,6 +2729,22 @@ export function Dashboard({ onLogout, embedded = false }: DashboardProps) {
           onDelete={handleDeleteVerifyResult}
           onDeleteFailed={handleDeleteFailedVerify}
           deleting={verifyDeleting}
+        />
+      )}
+
+      {auditDialogOpen && (
+        <AuditSuspendedDialog
+          open={auditDialogOpen}
+          onOpenChange={setAuditDialogOpen}
+          targetIds={auditTargetIds}
+          stateCounts={stateCounts}
+          credentials={allCredentials}
+          onSuccess={() => {
+            queryClient.invalidateQueries({ queryKey: ["credentials"] });
+          }}
+          onViewSuspended={() => {
+            setStateFilter("suspended");
+          }}
         />
       )}
     </div>

@@ -517,6 +517,7 @@ export interface ClientKeyItem {
   creditPrice?: number | null
   simulatedCacheEnabled?: boolean | null
   simulatedCacheRatio?: number | null
+  fixedCacheEnabled?: boolean | null
 }
 
 export interface ClientKeysResponse {
@@ -547,6 +548,7 @@ export interface CreateClientKeyRequest {
   creditPrice?: number
   simulatedCacheEnabled?: boolean
   simulatedCacheRatio?: number
+  fixedCacheEnabled?: boolean
 }
 
 /** 创建响应：明文 Key 仅在此处返回一次 */
@@ -569,6 +571,8 @@ export interface UpdateClientKeyRequest {
   resetSimulatedCache?: boolean
   simulatedCacheRatio?: number
   resetSimulatedCacheRatio?: boolean
+  fixedCacheEnabled?: boolean
+  resetFixedCache?: boolean
 }
 
 // ============ 用量统计 ============
@@ -841,6 +845,7 @@ export interface GroupItem {
   creditPrice?: number | null
   simulatedCacheEnabled?: boolean | null
   simulatedCacheRatio?: number | null
+  fixedCacheEnabled?: boolean | null
   /** 分组级负载均衡模式（null/undefined 表示继承全局） */
   loadBalancingMode?: LoadBalancingMode | null
   /** 分组级优先级反转（null/undefined 表示继承全局） */
@@ -871,6 +876,7 @@ export interface CreateGroupRequest {
   creditPrice?: number
   simulatedCacheEnabled?: boolean
   simulatedCacheRatio?: number
+  fixedCacheEnabled?: boolean
   loadBalancingMode?: LoadBalancingMode
   invertPriority?: boolean
   references?: GroupReference[]
@@ -890,6 +896,8 @@ export interface UpdateGroupRequest {
   resetSimulatedCache?: boolean
   simulatedCacheRatio?: number
   resetSimulatedCacheRatio?: boolean
+  fixedCacheEnabled?: boolean
+  resetFixedCache?: boolean
   /** 分组级负载均衡模式 */
   loadBalancingMode?: LoadBalancingMode
   /** 重置负载均衡模式为继承全局 */
@@ -971,6 +979,7 @@ export interface TokenByCreditConfigResponse {
   pricingRefreshHours: number
   simulatedCacheEnabled: boolean
   simulatedCacheRatio: number
+  fixedCacheEnabled: boolean
 }
 
 export interface SetTokenByCreditConfigRequest {
@@ -980,6 +989,7 @@ export interface SetTokenByCreditConfigRequest {
   pricingRefreshHours?: number
   simulatedCacheEnabled?: boolean
   simulatedCacheRatio?: number
+  fixedCacheEnabled?: boolean
 }
 
 export interface VerifyBillingRequest {

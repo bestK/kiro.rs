@@ -311,6 +311,7 @@ async fn main() {
             pricing_refresh_hours: config.pricing_refresh_hours,
             simulated_cache_enabled: config.simulated_cache_enabled,
             simulated_cache_ratio: config.simulated_cache_ratio,
+            fixed_cache_enabled: config.fixed_cache_enabled,
         },
     ));
 

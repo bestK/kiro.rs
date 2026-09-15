@@ -1129,6 +1129,7 @@ fn key_to_item(k: &super::client_keys::ClientKey) -> ClientKeyItem {
         credit_price: k.credit_price,
         simulated_cache_enabled: k.simulated_cache_enabled,
         simulated_cache_ratio: k.simulated_cache_ratio,
+        fixed_cache_enabled: k.fixed_cache_enabled,
     }
 }
 
@@ -1303,6 +1304,7 @@ pub async fn create_client_key(
         || payload.credit_price.is_some()
         || payload.simulated_cache_enabled.is_some()
         || payload.simulated_cache_ratio.is_some()
+        || payload.fixed_cache_enabled.is_some()
     {
         state.client_keys.update_token_by_credit(
             entry.id,
@@ -1313,6 +1315,8 @@ pub async fn create_client_key(
             payload.simulated_cache_enabled,
             false,
             payload.simulated_cache_ratio,
+            false,
+            payload.fixed_cache_enabled,
             false,
         );
     }
@@ -1417,6 +1421,7 @@ pub async fn update_client_key(
         let reset_price = payload.reset_credit_price.unwrap_or(false);
         let reset_cache = payload.reset_simulated_cache.unwrap_or(false);
         let reset_cache_ratio = payload.reset_simulated_cache_ratio.unwrap_or(false) || reset_cache;
+        let reset_fixed_cache = payload.reset_fixed_cache.unwrap_or(false) || reset_cache;
         if payload.token_by_credit_enabled.is_some()
             || reset_enabled
             || payload.credit_price.is_some()
@@ -1425,6 +1430,8 @@ pub async fn update_client_key(
             || reset_cache
             || payload.simulated_cache_ratio.is_some()
             || reset_cache_ratio
+            || payload.fixed_cache_enabled.is_some()
+            || reset_fixed_cache
         {
             state.client_keys.update_token_by_credit(
                 id,
@@ -1436,6 +1443,8 @@ pub async fn update_client_key(
                 reset_cache,
                 payload.simulated_cache_ratio,
                 reset_cache_ratio,
+                payload.fixed_cache_enabled,
+                reset_fixed_cache,
             );
         }
         Json(SuccessResponse::new(format!("Key #{} 已更新", id))).into_response()
@@ -2185,6 +2194,7 @@ fn group_to_item(g: &super::groups::Group, state: &AdminState) -> super::types::
         credit_price: g.credit_price,
         simulated_cache_enabled: g.simulated_cache_enabled,
         simulated_cache_ratio: g.simulated_cache_ratio,
+        fixed_cache_enabled: g.fixed_cache_enabled,
         load_balancing_mode: g.load_balancing_mode.clone(),
         invert_priority: g.invert_priority,
         references: g.references.clone(),
@@ -2257,6 +2267,7 @@ pub async fn create_group(
         payload.credit_price,
         payload.simulated_cache_enabled,
         payload.simulated_cache_ratio,
+        payload.fixed_cache_enabled,
         payload.load_balancing_mode,
         payload.invert_priority,
         payload.references.unwrap_or_default(),
@@ -2375,6 +2386,7 @@ pub async fn update_group(
     let reset_price = payload.reset_credit_price.unwrap_or(false);
     let reset_cache = payload.reset_simulated_cache.unwrap_or(false);
     let reset_cache_ratio = payload.reset_simulated_cache_ratio.unwrap_or(false) || reset_cache;
+    let reset_fixed_cache = payload.reset_fixed_cache.unwrap_or(false) || reset_cache;
     if payload.token_by_credit_enabled.is_some()
         || reset_enabled
         || payload.credit_price.is_some()
@@ -2383,6 +2395,8 @@ pub async fn update_group(
         || reset_cache
         || payload.simulated_cache_ratio.is_some()
         || reset_cache_ratio
+        || payload.fixed_cache_enabled.is_some()
+        || reset_fixed_cache
     {
         if let Err(e) = state.groups.update_token_by_credit(
             &current_name,
@@ -2394,6 +2408,8 @@ pub async fn update_group(
             reset_cache,
             payload.simulated_cache_ratio,
             reset_cache_ratio,
+            payload.fixed_cache_enabled,
+            reset_fixed_cache,
         ) {
             return (
                 StatusCode::BAD_REQUEST,

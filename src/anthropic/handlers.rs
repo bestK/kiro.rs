@@ -1643,6 +1643,7 @@ async fn handle_non_stream_request(
             token_by_credit.simulated_cache_enabled,
             token_by_credit.simulated_cache_ratio,
             real_hit_ratio,
+            token_by_credit.fixed_cache_enabled,
         );
         final_input_tokens = adj.input_tokens as i32;
         output_tokens = adj.output_tokens as i32;

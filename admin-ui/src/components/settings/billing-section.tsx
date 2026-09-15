@@ -958,6 +958,7 @@ export function BillingSection() {
   const modelsDevUrl = tokenByCredit?.modelsDevUrl || 'https://models.dev/api.json'
   const simulatedCacheEnabled = tokenByCredit?.simulatedCacheEnabled ?? false
   const simulatedCacheRatio = tokenByCredit?.simulatedCacheRatio ?? 0.8
+  const fixedCacheEnabled = tokenByCredit?.fixedCacheEnabled ?? false
 
   // 假设基准单价与单位（默认读取当前表单配置，可自由修改试算）
   const [hypoUnit, setHypoUnit] = useState<'k' | 'single'>('k')
@@ -1085,19 +1086,34 @@ export function BillingSection() {
           disabled={isLoading}
         />
         {simulatedCacheEnabled && (
-          <SettingNumber
-            label="模拟缓存命中率"
-            hint="折算输入 Token 时模拟被缓存命中的比例（默认 80%）。剩余 20% 为普通输入 Token。下游计算总扣费严格与无缓存时恒等。"
-            value={Math.round(simulatedCacheRatio * 100)}
-            min={10}
-            max={95}
-            unit="%"
-            presets={[50, 70, 80, 90]}
-            onCommit={(next) => saver.save('simulatedCacheRatio', { simulatedCacheRatio: next / 100 })}
-            pending={saver.isSaving('simulatedCacheRatio')}
-            saved={saver.isSaved('simulatedCacheRatio')}
-            disabled={isLoading}
-          />
+          <>
+            <SettingSwitch
+              label="固定缓存"
+              hint="开启后，每次调用均返回设定的固定缓存数量（不受上游真实缓存命中率约束）。关闭时以设定的缓存命中率为上限，实际取与真实命中率的较小值（即最高 xx% 缓存）。"
+              checked={fixedCacheEnabled}
+              onChange={(next) => saver.save('fixedCacheEnabled', { fixedCacheEnabled: next })}
+              pending={saver.isSaving('fixedCacheEnabled')}
+              saved={saver.isSaved('fixedCacheEnabled')}
+              disabled={isLoading}
+            />
+            <SettingNumber
+              label={fixedCacheEnabled ? '固定缓存比例' : '模拟缓存命中率上限'}
+              hint={
+                fixedCacheEnabled
+                  ? '开启固定缓存时，折算输入 Token 严格按照设定的固定比例拆分为缓存读取，不受上游真实缓存命中率约束。下游计算总扣费严格与无缓存时恒等。'
+                  : '折算输入 Token 时模拟被缓存命中的最高比例（默认 80%），实际取与真实请求缓存命中率的较小值。下游计算总扣费严格与无缓存时恒等。'
+              }
+              value={Math.round(simulatedCacheRatio * 100)}
+              min={10}
+              max={95}
+              unit="%"
+              presets={[50, 70, 80, 90]}
+              onCommit={(next) => saver.save('simulatedCacheRatio', { simulatedCacheRatio: next / 100 })}
+              pending={saver.isSaving('simulatedCacheRatio')}
+              saved={saver.isSaved('simulatedCacheRatio')}
+              disabled={isLoading}
+            />
+          </>
         )}
         <SettingNumber
           label="官方单价同步周期"

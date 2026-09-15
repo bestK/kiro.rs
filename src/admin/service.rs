@@ -824,6 +824,7 @@ impl AdminService {
                 pricing_refresh_hours: state.pricing_refresh_hours,
                 simulated_cache_enabled: state.simulated_cache_enabled,
                 simulated_cache_ratio: state.simulated_cache_ratio,
+                fixed_cache_enabled: state.fixed_cache_enabled,
             }
         } else {
             let config = self.token_manager.config();
@@ -834,6 +835,7 @@ impl AdminService {
                 pricing_refresh_hours: config.pricing_refresh_hours,
                 simulated_cache_enabled: config.simulated_cache_enabled,
                 simulated_cache_ratio: config.simulated_cache_ratio,
+                fixed_cache_enabled: config.fixed_cache_enabled,
             }
         }
     }
@@ -871,6 +873,9 @@ impl AdminService {
             if let Some(ratio) = req.simulated_cache_ratio {
                 state.simulated_cache_ratio = ratio;
             }
+            if let Some(fixed) = req.fixed_cache_enabled {
+                state.fixed_cache_enabled = fixed;
+            }
         }
 
         // 2. 持久化到 config.json
@@ -892,6 +897,9 @@ impl AdminService {
             }
             if let Some(ratio) = req.simulated_cache_ratio {
                 config.simulated_cache_ratio = ratio;
+            }
+            if let Some(fixed) = req.fixed_cache_enabled {
+                config.fixed_cache_enabled = fixed;
             }
         }) {
             tracing::warn!("持久化按积分返回 Token 配置失败: {}", e);

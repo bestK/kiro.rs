@@ -339,6 +339,10 @@ pub struct Config {
     #[serde(default = "default_simulated_cache_ratio")]
     pub simulated_cache_ratio: f64,
 
+    /// 固定缓存开关（默认 false）。开启后返回固定的缓存数量，而非最高 xx 缓存。
+    #[serde(default = "default_fixed_cache_enabled")]
+    pub fixed_cache_enabled: bool,
+
     /// 自定义响应头规则列表。
     ///
     /// 允许用户在 UI / config.json 配置下发给客户端的自定义响应头。
@@ -377,6 +381,10 @@ fn default_simulated_cache_enabled() -> bool {
 
 fn default_simulated_cache_ratio() -> f64 {
     0.8
+}
+
+fn default_fixed_cache_enabled() -> bool {
+    false
 }
 
 fn default_host() -> String {
@@ -548,6 +556,7 @@ impl Default for Config {
             pricing_refresh_hours: default_pricing_refresh_hours(),
             simulated_cache_enabled: default_simulated_cache_enabled(),
             simulated_cache_ratio: default_simulated_cache_ratio(),
+            fixed_cache_enabled: default_fixed_cache_enabled(),
             downstream_new_api: crate::model::downstream_newapi::DownstreamNewApiConfig::default(),
             config_path: None,
         }

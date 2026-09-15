@@ -771,6 +771,7 @@ export function GroupsPage() {
   const [createCreditPrice, setCreateCreditPrice] = useState('')
   const [createCacheMode, setCreateCacheMode] = useState<'inherit' | 'custom' | 'disabled'>('inherit')
   const [createCacheRatio, setCreateCacheRatio] = useState('80')
+  const [createFixedCache, setCreateFixedCache] = useState(false)
   // 分组级调度策略：'inherit' 跟随全局，其余为分组独立覆盖
   const [createDispatchMode, setCreateDispatchMode] = useState<'inherit' | 'priority' | 'balanced'>('inherit')
   const [createInvertMode, setCreateInvertMode] = useState<'inherit' | 'on' | 'off'>('inherit')
@@ -789,6 +790,7 @@ export function GroupsPage() {
   const [editCreditPrice, setEditCreditPrice] = useState('')
   const [editCacheMode, setEditCacheMode] = useState<'inherit' | 'custom' | 'disabled'>('inherit')
   const [editCacheRatio, setEditCacheRatio] = useState('80')
+  const [editFixedCache, setEditFixedCache] = useState(false)
   const [editDispatchMode, setEditDispatchMode] = useState<'inherit' | 'priority' | 'balanced'>('inherit')
   const [editInvertMode, setEditInvertMode] = useState<'inherit' | 'on' | 'off'>('inherit')
   const [editReferences, setEditReferences] = useState<GroupReference[]>([])
@@ -831,6 +833,7 @@ export function GroupsPage() {
     setCreateCreditPrice('')
     setCreateCacheMode('inherit')
     setCreateCacheRatio('80')
+    setCreateFixedCache(false)
     setCreateDispatchMode('inherit')
     setCreateInvertMode('inherit')
     setCreateReferences([])
@@ -874,6 +877,10 @@ export function GroupsPage() {
           createCreditMode === 'enabled' && createCacheMode === 'custom' && Number.isFinite(cacheRatioNum)
             ? cacheRatioNum / 100
             : undefined,
+        fixedCacheEnabled:
+          createCreditMode === 'enabled' && createCacheMode === 'custom'
+            ? createFixedCache
+            : undefined,
         loadBalancingMode: createDispatchMode === 'inherit' ? undefined : createDispatchMode,
         invertPriority:
           createInvertMode === 'inherit' ? undefined : createInvertMode === 'on',
@@ -906,6 +913,7 @@ export function GroupsPage() {
     setEditCacheRatio(
       g.simulatedCacheRatio != null ? String(Math.round(g.simulatedCacheRatio * 100)) : '80'
     )
+    setEditFixedCache(g.fixedCacheEnabled === true)
     setEditDispatchMode(g.loadBalancingMode ?? 'inherit')
     setEditInvertMode(g.invertPriority == null ? 'inherit' : g.invertPriority ? 'on' : 'off')
     setEditReferences(g.references ? JSON.parse(JSON.stringify(g.references)) : [])
@@ -955,6 +963,12 @@ export function GroupsPage() {
               ? cacheRatioNum / 100
               : undefined,
           resetSimulatedCacheRatio:
+            editCreditMode === 'disabled' || editCacheMode !== 'custom' ? true : undefined,
+          fixedCacheEnabled:
+            editCreditMode !== 'disabled' && editCacheMode === 'custom'
+              ? editFixedCache
+              : undefined,
+          resetFixedCache:
             editCreditMode === 'disabled' || editCacheMode !== 'custom' ? true : undefined,
           loadBalancingMode: editDispatchMode === 'inherit' ? undefined : editDispatchMode,
           resetLoadBalancingMode: editDispatchMode === 'inherit' ? true : undefined,
@@ -1195,13 +1209,14 @@ export function GroupsPage() {
         cell: (g) => {
           if (g.tokenByCreditEnabled === true) {
             const kPrice = g.creditPrice != null ? +(g.creditPrice * 1000).toFixed(4) : null
+            const isFixed = g.fixedCacheEnabled === true
             const cacheText =
               g.simulatedCacheEnabled === false
                 ? '无缓存拆分'
                 : g.simulatedCacheRatio != null
-                ? `${Math.round(g.simulatedCacheRatio * 100)}% 缓存`
+                ? `${isFixed ? '固定 ' : ''}${Math.round(g.simulatedCacheRatio * 100)}% 缓存`
                 : g.simulatedCacheEnabled === true
-                ? '模拟缓存'
+                ? (isFixed ? '固定缓存' : '模拟缓存')
                 : '缓存随全局'
             return (
               <div className="flex flex-col gap-1 items-start">
@@ -1230,7 +1245,7 @@ export function GroupsPage() {
               <span className="text-xs text-muted-foreground">跟随全局</span>
               {g.simulatedCacheRatio != null && (
                 <span className="text-[10px] text-muted-foreground">
-                  缓存 {Math.round(g.simulatedCacheRatio * 100)}%
+                  {g.fixedCacheEnabled === true ? '固定' : ''}缓存 {Math.round(g.simulatedCacheRatio * 100)}%
                 </span>
               )}
             </div>
@@ -1636,34 +1651,51 @@ export function GroupsPage() {
                     </div>
 
                     {createCacheMode === 'custom' && (
-                      <div className="space-y-1.5 pl-0.5">
-                        <label className="text-xs font-medium text-muted-foreground">专属缓存命中率 (%)</label>
-                        <div className="flex items-center gap-2">
-                          <Input
-                            type="number"
-                            min={1}
-                            max={99}
-                            value={createCacheRatio}
-                            onChange={(e) => setCreateCacheRatio(e.target.value)}
-                            className="w-24 text-xs h-8"
+                      <div className="space-y-2.5 pl-0.5">
+                        <div className="space-y-1.5">
+                          <label className="text-xs font-medium text-muted-foreground">
+                            {createFixedCache ? '专属固定缓存比例 (%)' : '专属缓存命中率上限 (%)'}
+                          </label>
+                          <div className="flex items-center gap-2">
+                            <Input
+                              type="number"
+                              min={1}
+                              max={99}
+                              value={createCacheRatio}
+                              onChange={(e) => setCreateCacheRatio(e.target.value)}
+                              className="w-24 text-xs h-8"
+                              disabled={createGroup.isPending}
+                            />
+                            <span className="text-xs text-muted-foreground">%</span>
+                            <div className="flex items-center gap-1">
+                              {[50, 70, 80, 90].map((preset) => (
+                                <Button
+                                  key={preset}
+                                  type="button"
+                                  size="sm"
+                                  variant={createCacheRatio === String(preset) ? 'secondary' : 'ghost'}
+                                  className="h-7 px-2 text-xs"
+                                  onClick={() => setCreateCacheRatio(String(preset))}
+                                  disabled={createGroup.isPending}
+                                >
+                                  {preset}%
+                                </Button>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex items-center justify-between rounded-lg border p-2 bg-muted/20">
+                          <div className="space-y-0.5">
+                            <div className="text-xs font-medium">固定缓存</div>
+                            <div className="text-[11px] text-muted-foreground">
+                              开启后返回固定比例缓存，不受上游真实缓存命中率约束；关闭时以此为上限
+                            </div>
+                          </div>
+                          <Switch
+                            checked={createFixedCache}
+                            onCheckedChange={setCreateFixedCache}
                             disabled={createGroup.isPending}
                           />
-                          <span className="text-xs text-muted-foreground">%</span>
-                          <div className="flex items-center gap-1">
-                            {[50, 70, 80, 90].map((preset) => (
-                              <Button
-                                key={preset}
-                                type="button"
-                                size="sm"
-                                variant={createCacheRatio === String(preset) ? 'secondary' : 'ghost'}
-                                className="h-7 px-2 text-xs"
-                                onClick={() => setCreateCacheRatio(String(preset))}
-                                disabled={createGroup.isPending}
-                              >
-                                {preset}%
-                              </Button>
-                            ))}
-                          </div>
                         </div>
                       </div>
                     )}
@@ -1885,34 +1917,51 @@ export function GroupsPage() {
                     </div>
 
                     {editCacheMode === 'custom' && (
-                      <div className="space-y-1.5 pl-0.5">
-                        <label className="text-xs font-medium text-muted-foreground">专属缓存命中率 (%)</label>
-                        <div className="flex items-center gap-2">
-                          <Input
-                            type="number"
-                            min={1}
-                            max={99}
-                            value={editCacheRatio}
-                            onChange={(e) => setEditCacheRatio(e.target.value)}
-                            className="w-24 text-xs h-8"
+                      <div className="space-y-2.5 pl-0.5">
+                        <div className="space-y-1.5">
+                          <label className="text-xs font-medium text-muted-foreground">
+                            {editFixedCache ? '专属固定缓存比例 (%)' : '专属缓存命中率上限 (%)'}
+                          </label>
+                          <div className="flex items-center gap-2">
+                            <Input
+                              type="number"
+                              min={1}
+                              max={99}
+                              value={editCacheRatio}
+                              onChange={(e) => setEditCacheRatio(e.target.value)}
+                              className="w-24 text-xs h-8"
+                              disabled={updateGroup.isPending}
+                            />
+                            <span className="text-xs text-muted-foreground">%</span>
+                            <div className="flex items-center gap-1">
+                              {[50, 70, 80, 90].map((preset) => (
+                                <Button
+                                  key={preset}
+                                  type="button"
+                                  size="sm"
+                                  variant={editCacheRatio === String(preset) ? 'secondary' : 'ghost'}
+                                  className="h-7 px-2 text-xs"
+                                  onClick={() => setEditCacheRatio(String(preset))}
+                                  disabled={updateGroup.isPending}
+                                >
+                                  {preset}%
+                                </Button>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex items-center justify-between rounded-lg border p-2 bg-muted/20">
+                          <div className="space-y-0.5">
+                            <div className="text-xs font-medium">固定缓存</div>
+                            <div className="text-[11px] text-muted-foreground">
+                              开启后返回固定比例缓存，不受上游真实缓存命中率约束；关闭时以此为上限
+                            </div>
+                          </div>
+                          <Switch
+                            checked={editFixedCache}
+                            onCheckedChange={setEditFixedCache}
                             disabled={updateGroup.isPending}
                           />
-                          <span className="text-xs text-muted-foreground">%</span>
-                          <div className="flex items-center gap-1">
-                            {[50, 70, 80, 90].map((preset) => (
-                              <Button
-                                key={preset}
-                                type="button"
-                                size="sm"
-                                variant={editCacheRatio === String(preset) ? 'secondary' : 'ghost'}
-                                className="h-7 px-2 text-xs"
-                                onClick={() => setEditCacheRatio(String(preset))}
-                                disabled={updateGroup.isPending}
-                              >
-                                {preset}%
-                              </Button>
-                            ))}
-                          </div>
                         </div>
                       </div>
                     )}

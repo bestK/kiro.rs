@@ -8163,6 +8163,7 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
                 Vec::new(),
             )
             .unwrap();
@@ -8171,6 +8172,7 @@ mod tests {
         group_mgr
             .create_with_options(
                 "group_inverted".into(),
+                None,
                 None,
                 None,
                 None,
@@ -8191,6 +8193,7 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
                 Some("priority".into()),
                 Some(false),
                 Vec::new(),
@@ -8201,6 +8204,7 @@ mod tests {
         group_mgr
             .create_with_options(
                 "group_balanced".into(),
+                None,
                 None,
                 None,
                 None,

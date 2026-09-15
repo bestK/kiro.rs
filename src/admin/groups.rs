@@ -74,6 +74,9 @@ pub struct Group {
     /// 模拟 Prompt 缓存命中率（None 表示继承全局，范围 0.01..0.99）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub simulated_cache_ratio: Option<f64>,
+    /// 是否开启固定缓存（None 表示继承全局）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fixed_cache_enabled: Option<bool>,
     /// 负载均衡模式（None 表示继承全局配置: "priority" 或 "balanced"）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub load_balancing_mode: Option<String>,
@@ -186,6 +189,7 @@ impl GroupManager {
         credit_price: Option<f64>,
         simulated_cache_enabled: Option<bool>,
         simulated_cache_ratio: Option<f64>,
+        fixed_cache_enabled: Option<bool>,
         load_balancing_mode: Option<String>,
         invert_priority: Option<bool>,
         references: Vec<GroupReference>,
@@ -217,6 +221,7 @@ impl GroupManager {
             credit_price,
             simulated_cache_enabled,
             simulated_cache_ratio,
+            fixed_cache_enabled,
             load_balancing_mode: valid_mode,
             invert_priority,
             references,
@@ -243,6 +248,7 @@ impl GroupManager {
             None,
             None,
             None,
+            None,
             Vec::new(),
         )
     }
@@ -265,6 +271,8 @@ impl GroupManager {
         reset_simulated_cache: bool,
         simulated_cache_ratio: Option<f64>,
         reset_simulated_cache_ratio: bool,
+        fixed_cache_enabled: Option<bool>,
+        reset_fixed_cache: bool,
     ) -> anyhow::Result<Group> {
         let mut inner = self.inner.write();
         let entry = inner
@@ -290,6 +298,11 @@ impl GroupManager {
             entry.simulated_cache_ratio = None;
         } else if simulated_cache_ratio.is_some() {
             entry.simulated_cache_ratio = simulated_cache_ratio;
+        }
+        if reset_fixed_cache || reset_simulated_cache {
+            entry.fixed_cache_enabled = None;
+        } else if fixed_cache_enabled.is_some() {
+            entry.fixed_cache_enabled = fixed_cache_enabled;
         }
         let cloned = entry.clone();
         self.save_locked(&inner);
@@ -573,6 +586,7 @@ impl GroupManager {
                         credit_price: None,
                         simulated_cache_enabled: None,
                         simulated_cache_ratio: None,
+                        fixed_cache_enabled: None,
                         load_balancing_mode: None,
                         invert_priority: None,
                         references: Vec::new(),
@@ -830,6 +844,7 @@ mod tests {
         // 创建带调度模式的分组
         let g1 = mgr.create_with_options(
             "g1".into(),
+            None,
             None,
             None,
             None,

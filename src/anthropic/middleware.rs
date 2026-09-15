@@ -26,6 +26,7 @@ pub struct TokenByCreditConfig {
     pub credit_price: f64,
     pub simulated_cache_enabled: bool,
     pub simulated_cache_ratio: f64,
+    pub fixed_cache_enabled: bool,
 }
 
 impl Default for TokenByCreditConfig {
@@ -35,6 +36,7 @@ impl Default for TokenByCreditConfig {
             credit_price: 0.002,
             simulated_cache_enabled: false,
             simulated_cache_ratio: 0.8,
+            fixed_cache_enabled: false,
         }
     }
 }
@@ -86,11 +88,18 @@ impl TokenByCreditConfig {
             global_tbc.simulated_cache_enabled
         };
 
+        // 5. fixed_cache_enabled: Key > Group > Global
+        let fixed_cache_enabled = client_key
+            .and_then(|k| k.fixed_cache_enabled)
+            .or_else(|| group.and_then(|g| g.fixed_cache_enabled))
+            .unwrap_or(global_tbc.fixed_cache_enabled);
+
         Self {
             enabled,
             credit_price,
             simulated_cache_enabled,
             simulated_cache_ratio,
+            fixed_cache_enabled,
         }
     }
 }
@@ -322,6 +331,7 @@ mod tests {
             credit_price: price,
             simulated_cache_enabled: cache_enabled,
             simulated_cache_ratio: cache_ratio,
+            fixed_cache_enabled: None,
             load_balancing_mode: None,
             invert_priority: None,
             references: Vec::new(),
@@ -355,6 +365,7 @@ mod tests {
             credit_price: price,
             simulated_cache_enabled: cache_enabled,
             simulated_cache_ratio: cache_ratio,
+            fixed_cache_enabled: None,
         }
     }
 
@@ -367,6 +378,7 @@ mod tests {
             pricing_refresh_hours: 24,
             simulated_cache_enabled: false,
             simulated_cache_ratio: 0.8,
+            fixed_cache_enabled: false,
         };
 
         let grp = make_test_group(Some(true), Some(0.003), None, Some(0.85));
@@ -376,6 +388,7 @@ mod tests {
         assert_eq!(resolved.credit_price, 0.003);
         assert!(resolved.simulated_cache_enabled, "Simulated cache should be active when cache_ratio is set");
         assert_eq!(resolved.simulated_cache_ratio, 0.85);
+        assert!(!resolved.fixed_cache_enabled);
     }
 
     #[test]
@@ -387,6 +400,7 @@ mod tests {
             pricing_refresh_hours: 24,
             simulated_cache_enabled: false,
             simulated_cache_ratio: 0.8,
+            fixed_cache_enabled: false,
         };
 
         let key = make_test_key(Some(true), None, None, None);
@@ -396,6 +410,7 @@ mod tests {
         assert!(resolved.enabled, "Key should enable token_by_credit even if group and global are false");
         assert_eq!(resolved.credit_price, 0.002, "Should fallback to global default price");
         assert!(!resolved.simulated_cache_enabled, "Cache simulation should remain false if not configured");
+        assert!(!resolved.fixed_cache_enabled);
     }
 
     #[test]
@@ -407,6 +422,7 @@ mod tests {
             pricing_refresh_hours: 24,
             simulated_cache_enabled: true,
             simulated_cache_ratio: 0.8,
+            fixed_cache_enabled: false,
         };
 
         let grp = make_test_group(Some(true), None, Some(false), Some(0.9));
@@ -431,6 +447,29 @@ mod tests {
     }
 
     #[test]
+    fn test_fixed_cache_resolution_hierarchy() {
+        // Global false, Group true => Group wins
+        let mut global_tbc = TokenByCreditState::default();
+        global_tbc.fixed_cache_enabled = false;
+        let mut grp = make_test_group(Some(true), None, Some(true), Some(0.8));
+        grp.fixed_cache_enabled = Some(true);
+        let resolved = TokenByCreditConfig::resolve(None, Some(&grp), &global_tbc);
+        assert!(resolved.fixed_cache_enabled);
+
+        // Key false => Key overrides Group true
+        let mut key = make_test_key(Some(true), None, Some(true), Some(0.8));
+        key.fixed_cache_enabled = Some(false);
+        let resolved_key = TokenByCreditConfig::resolve(Some(&key), Some(&grp), &global_tbc);
+        assert!(!resolved_key.fixed_cache_enabled);
+
+        // Key true => Key overrides Group false
+        grp.fixed_cache_enabled = Some(false);
+        key.fixed_cache_enabled = Some(true);
+        let resolved_key_true = TokenByCreditConfig::resolve(Some(&key), Some(&grp), &global_tbc);
+        assert!(resolved_key_true.fixed_cache_enabled);
+    }
+
+    #[test]
     fn test_invalid_price_falls_back() {
         let global_tbc = TokenByCreditState {
             enabled: false,
@@ -439,6 +478,7 @@ mod tests {
             pricing_refresh_hours: 24,
             simulated_cache_enabled: false,
             simulated_cache_ratio: 0.8,
+            fixed_cache_enabled: false,
         };
 
         let grp = make_test_group(Some(true), Some(-1.0), None, None);

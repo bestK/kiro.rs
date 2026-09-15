@@ -532,13 +532,14 @@ export function ClientKeysPage() {
         cell: (k) => {
           if (k.tokenByCreditEnabled === true) {
             const kPrice = k.creditPrice != null ? +(k.creditPrice * 1000).toFixed(4) : null
+            const isFixed = k.fixedCacheEnabled === true
             const cacheText =
               k.simulatedCacheEnabled === false
                 ? '无缓存拆分'
                 : k.simulatedCacheRatio != null
-                ? `${Math.round(k.simulatedCacheRatio * 100)}% 缓存`
+                ? `${isFixed ? '固定 ' : ''}${Math.round(k.simulatedCacheRatio * 100)}% 缓存`
                 : k.simulatedCacheEnabled === true
-                ? '模拟缓存'
+                ? (isFixed ? '固定缓存' : '模拟缓存')
                 : '缓存随上一级'
             return (
               <div className="flex flex-col gap-1 items-start">
@@ -567,7 +568,7 @@ export function ClientKeysPage() {
               <span className="text-[12px] text-muted-foreground">继承</span>
               {k.simulatedCacheRatio != null && (
                 <span className="text-[10px] text-muted-foreground">
-                  缓存 {Math.round(k.simulatedCacheRatio * 100)}%
+                  {k.fixedCacheEnabled === true ? '固定' : ''}缓存 {Math.round(k.simulatedCacheRatio * 100)}%
                 </span>
               )}
             </div>

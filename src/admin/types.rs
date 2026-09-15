@@ -774,6 +774,7 @@ pub struct TokenByCreditConfigResponse {
     pub pricing_refresh_hours: u64,
     pub simulated_cache_enabled: bool,
     pub simulated_cache_ratio: f64,
+    pub fixed_cache_enabled: bool,
 }
 
 /// 按积分返回 Token 全局配置更新请求。
@@ -792,6 +793,8 @@ pub struct SetTokenByCreditConfigRequest {
     pub simulated_cache_enabled: Option<bool>,
     #[serde(default)]
     pub simulated_cache_ratio: Option<f64>,
+    #[serde(default)]
+    pub fixed_cache_enabled: Option<bool>,
 }
 
 /// 会话粘性路由配置 + 运行时统计响应。
@@ -1132,6 +1135,9 @@ pub struct ClientKeyItem {
     /// 模拟 Prompt 缓存命中率（None 表示继承分组或全局配置）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub simulated_cache_ratio: Option<f64>,
+    /// 是否开启固定缓存（None 表示继承分组或全局配置）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fixed_cache_enabled: Option<bool>,
 }
 
 /// 客户端 Key 列表响应
@@ -1233,6 +1239,9 @@ pub struct CreateClientKeyRequest {
     /// 模拟 Prompt 缓存命中率（None 表示继承）
     #[serde(default)]
     pub simulated_cache_ratio: Option<f64>,
+    /// 是否开启固定缓存（None 表示继承）
+    #[serde(default)]
+    pub fixed_cache_enabled: Option<bool>,
 }
 
 /// 创建客户端 Key 响应（明文 Key 仅在此处返回一次）
@@ -1277,6 +1286,12 @@ pub struct UpdateClientKeyRequest {
     /// 是否重置模拟 Prompt 缓存命中率为继承
     #[serde(default)]
     pub reset_simulated_cache_ratio: Option<bool>,
+    /// 是否开启固定缓存
+    #[serde(default)]
+    pub fixed_cache_enabled: Option<bool>,
+    /// 是否重置固定缓存为继承
+    #[serde(default)]
+    pub reset_fixed_cache: Option<bool>,
 }
 
 /// 设置客户端 Key 的积分使用上限
@@ -1554,6 +1569,9 @@ pub struct GroupItem {
     /// 模拟 Prompt 缓存命中率（None 表示继承全局配置）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub simulated_cache_ratio: Option<f64>,
+    /// 是否开启固定缓存（None 表示继承全局配置）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fixed_cache_enabled: Option<bool>,
     /// 负载均衡模式（None 表示继承全局配置: "priority" 或 "balanced"）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub load_balancing_mode: Option<String>,
@@ -1609,6 +1627,8 @@ pub struct CreateGroupRequest {
     #[serde(default)]
     pub simulated_cache_ratio: Option<f64>,
     #[serde(default)]
+    pub fixed_cache_enabled: Option<bool>,
+    #[serde(default)]
     pub load_balancing_mode: Option<String>,
     #[serde(default)]
     pub invert_priority: Option<bool>,
@@ -1653,6 +1673,12 @@ pub struct UpdateGroupRequest {
     /// 是否重置模拟 Prompt 缓存命中率为继承
     #[serde(default)]
     pub reset_simulated_cache_ratio: Option<bool>,
+    /// 是否开启固定缓存
+    #[serde(default)]
+    pub fixed_cache_enabled: Option<bool>,
+    /// 是否重置固定缓存为继承
+    #[serde(default)]
+    pub reset_fixed_cache: Option<bool>,
     /// 负载均衡模式（priority / balanced）
     #[serde(default)]
     pub load_balancing_mode: Option<String>,

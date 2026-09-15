@@ -1504,6 +1504,7 @@ impl StreamContext {
                     tbc.simulated_cache_enabled,
                     tbc.simulated_cache_ratio,
                     real_hit_ratio,
+                    tbc.fixed_cache_enabled,
                 );
                 input = adj.input_tokens as i32;
                 output = adj.output_tokens as i32;
@@ -5593,6 +5594,7 @@ mod tests {
                 credit_price: 0.002,
                 simulated_cache_enabled: false,
                 simulated_cache_ratio: 0.8,
+                fixed_cache_enabled: false,
             }),
             None, // uses fallback pricing: input 3.0, output 15.0 per 1M
         );

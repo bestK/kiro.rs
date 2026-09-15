@@ -1634,6 +1634,7 @@ async fn handle_non_stream_request(
             cache_creation_tokens,
             cache_read_tokens,
         );
+        let window_size = get_context_window_size(model);
         let adj = crate::model::pricing::calculate_tokens_by_credit(
             final_input_tokens.max(0) as u64,
             output_tokens.max(0) as u64,
@@ -1644,6 +1645,7 @@ async fn handle_non_stream_request(
             token_by_credit.simulated_cache_ratio,
             real_hit_ratio,
             token_by_credit.fixed_cache_enabled,
+            Some(window_size as u64),
         );
         final_input_tokens = adj.input_tokens as i32;
         output_tokens = adj.output_tokens as i32;

@@ -1078,7 +1078,7 @@ export function BillingSection() {
         />
         <SettingSwitch
           label="模拟 Prompt 缓存"
-          hint="开启后，折算出的输入 Token 会按比例拆分为常规输入与缓存读取 (cache_read_input_tokens)。下游通常按 0.1x 缓存价格扣费，算法严格保证拆分后下游计费总额绝对恒等（0 误差），下游展示账单有缓存命中更美观自然。"
+          hint="开启后，折算出的输入 Token 会按比例拆分为常规输入与缓存读取 (cache_read_input_tokens)。下游通常按 0.1x 缓存价格扣费，算法严格保证拆分后下游计费总额绝对恒等（0 误差），且总 Token 自动受官方模型上限（如 200K / 272K 等）保护不超限，下游展示账单更美观自然。"
           checked={simulatedCacheEnabled}
           onChange={(next) => saver.save('simulatedCacheEnabled', { simulatedCacheEnabled: next })}
           pending={saver.isSaving('simulatedCacheEnabled')}

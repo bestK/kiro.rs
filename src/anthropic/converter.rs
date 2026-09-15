@@ -325,6 +325,8 @@ pub fn get_context_window_size(model: &str) -> i32 {
         {
             1_000_000
         }
+        Some(mapped) if mapped.contains("deepseek") => 128_000,
+        Some(mapped) if mapped.contains("qwen") => 256_000,
         _ => 200_000,
     }
 }
@@ -2071,6 +2073,10 @@ mod tests {
                 "{model} 应回退 200k"
             );
         }
+
+        // 官方指定非 200k/1M 窗口模型
+        assert_eq!(get_context_window_size("deepseek-3.2"), 128_000);
+        assert_eq!(get_context_window_size("qwen3-coder-next"), 256_000);
     }
 
     #[test]

@@ -1495,6 +1495,7 @@ impl StreamContext {
                 // 真实命中率必须在覆盖前算出来，用于约束模拟拆分
                 let real_hit_ratio =
                     crate::model::pricing::cache_hit_ratio(input, creation, read);
+                let window_size = get_context_window_size(&self.model);
                 let adj = crate::model::pricing::calculate_tokens_by_credit(
                     input.max(0) as u64,
                     output.max(0) as u64,
@@ -1505,6 +1506,7 @@ impl StreamContext {
                     tbc.simulated_cache_ratio,
                     real_hit_ratio,
                     tbc.fixed_cache_enabled,
+                    Some(window_size as u64),
                 );
                 input = adj.input_tokens as i32;
                 output = adj.output_tokens as i32;

@@ -347,6 +347,11 @@ pub fn cache_hit_ratio(uncached_input: i32, cache_write: i32, cache_read: i32) -
 /// - 开启固定缓存（fixed_cache_enabled = true）：
 ///   忽略真实命中率，直接按配置的 `simulated_cache_ratio` 返回固定缓存数量，
 ///   而非受真实命中率约束的最高 xx 缓存。
+/// - 官方上限约束（max_tokens_limit）：
+///   若指定了官方模型上下文/双阶梯限制（例如 GPT-5.6 的 272K，Claude/MiniMax 的 200K，DeepSeek 的 128K 等），
+///   模拟缓存拆分后的总 Token（adjusted_in + cache_read + final_out）严格受此上限压制，
+///   避免缓存放大效应导致下游触发 context_window_exceeded 或跳入高倍率阶梯，
+///   且拆分依然保持 10 的倍数，下游计算金额零误差！
 pub fn calculate_tokens_by_credit(
     raw_input: u64,
     raw_output: u64,
@@ -357,6 +362,7 @@ pub fn calculate_tokens_by_credit(
     simulated_cache_ratio: f64,
     real_cache_hit_ratio: f64,
     fixed_cache_enabled: bool,
+    max_tokens_limit: Option<u64>,
 ) -> AdjustedTokens {
     let target_amount = credits * credit_price;
     let input_cost_per_token = cost.input / 1_000_000.0;
@@ -424,7 +430,25 @@ pub fn calculate_tokens_by_credit(
         let ideal_r = (ideal_total * c).round() as u64;
         let r_10 = ((ideal_r + 5) / 10) * 10;
         let max_r = final_in * 10;
-        let r = r_10.min(max_r);
+        let mut r = r_10.min(max_r);
+
+        // 模拟缓存 Token 上限约束：
+        // 拆分后的下游总 token (adjusted_in + cache_read + final_out) 不能超过官方模型上限 (max_tokens_limit)。
+        // 由于 adjusted_in = final_in - r/10，下游总 token 为 (final_in + 0.9 * r + final_out)。
+        // 若总 token 超过 max_tokens_limit，则倒推 r 的安全上限以确保不超过官方上限，
+        // 同时 r 保持 10 的倍数，使得 (adjusted_in + 0.1 * r) 恒等于 final_in，计费金额绝对 0 误差！
+        if let Some(limit) = max_tokens_limit {
+            let max_prompt = limit.saturating_sub(final_out);
+            if final_in < max_prompt {
+                let headroom = max_prompt - final_in;
+                let max_allowed_r = ((headroom as f64) / 0.9).floor() as u64;
+                let max_r_multiple_of_10 = (max_allowed_r / 10) * 10;
+                r = r.min(max_r_multiple_of_10);
+            } else {
+                r = 0;
+            }
+        }
+
         let i = final_in - (r / 10);
         (r, i)
     } else {
@@ -463,7 +487,7 @@ mod tests {
         let raw_in = 1000;
         let raw_out = 200;
 
-        let adj = calculate_tokens_by_credit(raw_in, raw_out, credits, credit_price, &cost, false, 0.0, 0.0, false);
+        let adj = calculate_tokens_by_credit(raw_in, raw_out, credits, credit_price, &cost, false, 0.0, 0.0, false, None);
         assert_eq!(adj.cache_creation_tokens, 0);
         assert_eq!(adj.cache_read_tokens, 0);
 
@@ -485,7 +509,7 @@ mod tests {
         let credits = 0.5;
         let credit_price = 0.002;
         // 目标金额 = $0.001
-        let adj = calculate_tokens_by_credit(500, 50, credits, credit_price, &cost, true, 0.8, 0.8, false);
+        let adj = calculate_tokens_by_credit(500, 50, credits, credit_price, &cost, true, 0.8, 0.8, false, None);
         assert!(adj.cache_read_tokens > 0);
 
         // 下游按 Claude 缓存定价计算: input * $3/M + cache_read * $0.3/M + output * $15/M
@@ -508,15 +532,15 @@ mod tests {
         let credit_price = 0.08;
 
         // 场景 1：小输入 + 小输出。旧算法 ratio≈35，会把 1 token 放大到 35（速度虚高数十倍）
-        let adj = calculate_tokens_by_credit(6, 1, 0.0144, credit_price, &cost, true, 0.8, 0.8, false);
+        let adj = calculate_tokens_by_credit(6, 1, 0.0144, credit_price, &cost, true, 0.8, 0.8, false, None);
         assert_eq!(adj.output_tokens, 1, "输出必须保持真实值 1");
 
         // 场景 2：大输入 + 多输出。旧算法 ratio<1，会把 10 token 压成 1（速度被低估）
-        let adj = calculate_tokens_by_credit(6482, 10, 0.0157, credit_price, &cost, true, 0.8, 0.8, false);
+        let adj = calculate_tokens_by_credit(6482, 10, 0.0157, credit_price, &cost, true, 0.8, 0.8, false, None);
         assert_eq!(adj.output_tokens, 10, "输出必须保持真实值 10");
 
         // 场景 3：真实输出为 0 时保底 1，避免下游客户端报空回复
-        let adj = calculate_tokens_by_credit(100, 0, 0.02, credit_price, &cost, false, 0.0, 0.0, false);
+        let adj = calculate_tokens_by_credit(100, 0, 0.02, credit_price, &cost, false, 0.0, 0.0, false, None);
         assert_eq!(adj.output_tokens, 1);
     }
 
@@ -536,7 +560,7 @@ mod tests {
         ] {
             for &cache_on in &[false, true] {
                 let adj = calculate_tokens_by_credit(
-                    raw_in, raw_out, credits, credit_price, &cost, cache_on, 0.8, 0.8, false,
+                    raw_in, raw_out, credits, credit_price, &cost, cache_on, 0.8, 0.8, false, None,
                 );
                 // 下游计价：input * P_in + cache_read * 0.1 * P_in + output * P_out
                 let downstream = (adj.input_tokens as f64) * input_unit
@@ -564,7 +588,7 @@ mod tests {
 
         // 真实无缓存命中（real_cache_hit_ratio = 0），但配置缓存率为 0.9
         let adj = calculate_tokens_by_credit(
-            760, 9, credits, credit_price, &cost, true, 0.9, 0.0, false,
+            760, 9, credits, credit_price, &cost, true, 0.9, 0.0, false, None,
         );
         assert_eq!(adj.cache_read_tokens, 0, "真实无缓存时不得编造 cache_read");
         assert_eq!(adj.cache_creation_tokens, 0);
@@ -578,7 +602,7 @@ mod tests {
 
         // 对照：真实确有 0.9 命中时才允许拆出大量 cache_read
         let adj_real = calculate_tokens_by_credit(
-            760, 9, credits, credit_price, &cost, true, 0.9, 0.9, false,
+            760, 9, credits, credit_price, &cost, true, 0.9, 0.9, false, None,
         );
         assert!(adj_real.cache_read_tokens > 0);
         assert!(
@@ -592,7 +616,7 @@ mod tests {
     fn test_configured_ratio_is_only_an_upper_bound() {
         let cost = ModelCost { input: 3.0, output: 15.0 };
         // 真实命中 30%，配置上限 90% ⇒ 应按 30% 拆分，不得夸大到 90%
-        let adj = calculate_tokens_by_credit(1000, 50, 0.5, 0.08, &cost, true, 0.9, 0.3, false);
+        let adj = calculate_tokens_by_credit(1000, 50, 0.5, 0.08, &cost, true, 0.9, 0.3, false, None);
         let total_prompt = adj.input_tokens + adj.cache_read_tokens;
         let hit = (adj.cache_read_tokens as f64) / (total_prompt as f64);
         assert!(
@@ -601,7 +625,7 @@ mod tests {
         );
 
         // 真实命中 95%，配置上限 50% ⇒ 受配置封顶为 50%
-        let adj = calculate_tokens_by_credit(1000, 50, 0.5, 0.08, &cost, true, 0.5, 0.95, false);
+        let adj = calculate_tokens_by_credit(1000, 50, 0.5, 0.08, &cost, true, 0.5, 0.95, false, None);
         let total_prompt = adj.input_tokens + adj.cache_read_tokens;
         let hit = (adj.cache_read_tokens as f64) / (total_prompt as f64);
         assert!((hit - 0.5).abs() < 0.02, "应被配置封顶为 50%，实际 {hit:.4}");
@@ -616,7 +640,7 @@ mod tests {
 
         // 真实无缓存命中 (real_cache_hit_ratio = 0.0)，配置 0.8，开启 fixed_cache_enabled = true
         let adj = calculate_tokens_by_credit(
-            760, 9, credits, credit_price, &cost, true, 0.8, 0.0, true,
+            760, 9, credits, credit_price, &cost, true, 0.8, 0.0, true, None,
         );
         assert!(adj.cache_read_tokens > 0, "开启固定缓存时应按设定比例拆分缓存");
         let total_prompt = adj.input_tokens + adj.cache_read_tokens;
@@ -633,7 +657,7 @@ mod tests {
 
         // 对照：未开启固定缓存 (fixed_cache_enabled = false)，real_cache_hit_ratio = 0.0 时为 0 缓存
         let adj_capped = calculate_tokens_by_credit(
-            760, 9, credits, credit_price, &cost, true, 0.8, 0.0, false,
+            760, 9, credits, credit_price, &cost, true, 0.8, 0.0, false, None,
         );
         assert_eq!(adj_capped.cache_read_tokens, 0, "未开启固定缓存且真实无命中时应为 0");
     }
@@ -653,7 +677,7 @@ mod tests {
     fn test_simulated_cache_hit_ratio_matches_config() {
         let cost = ModelCost { input: 3.0, output: 15.0 };
         for &ratio in &[0.5, 0.8, 0.9] {
-            let adj = calculate_tokens_by_credit(6, 1, 0.0144, 0.08, &cost, true, ratio, ratio, false);
+            let adj = calculate_tokens_by_credit(6, 1, 0.0144, 0.08, &cost, true, ratio, ratio, false, None);
             let total_prompt = adj.input_tokens + adj.cache_read_tokens;
             let hit = (adj.cache_read_tokens as f64) / (total_prompt as f64);
             assert!(
@@ -671,7 +695,7 @@ mod tests {
 
         // 预算够放几十个 output token：应精确压到预算内
         let target = 0.001_f64;
-        let adj = calculate_tokens_by_credit(100, 5000, 1.0, target, &cost, true, 0.8, 0.8, false);
+        let adj = calculate_tokens_by_credit(100, 5000, 1.0, target, &cost, true, 0.8, 0.8, false, None);
         assert!(adj.output_tokens >= 1);
         assert!(adj.output_tokens < 5000, "预算不足时输出应被缩减");
         assert_eq!(adj.input_tokens, 0);
@@ -685,7 +709,7 @@ mod tests {
         // 预算连 1 个 output token 都不够：保底 1 token 优先（避免下游报空回复），
         // 此时允许超出，但超出量不得大于 1 个 output token 的单价。
         let tiny = 0.000_001_f64;
-        let adj = calculate_tokens_by_credit(100, 5000, 0.001, 0.001, &cost, true, 0.8, 0.8, false);
+        let adj = calculate_tokens_by_credit(100, 5000, 0.001, 0.001, &cost, true, 0.8, 0.8, false, None);
         assert_eq!(adj.output_tokens, 1, "保底 1 个 output token");
         let downstream = (adj.output_tokens as f64) * output_unit;
         assert!(downstream - tiny <= output_unit);
@@ -714,13 +738,76 @@ mod tests {
         };
         let credits = 0.0277551576782753;
         let credit_price = 0.002;
-        let adj = calculate_tokens_by_credit(760, 1, credits, credit_price, &cost, false, 0.0, 0.0, false);
+        let adj = calculate_tokens_by_credit(760, 1, credits, credit_price, &cost, false, 0.0, 0.0, false, None);
         assert_eq!(adj.output_tokens, 1);
         assert_eq!(adj.input_tokens, 6);
         let calculated = (adj.input_tokens as f64 * (5.0 / 1_000_000.0))
             + (adj.output_tokens as f64 * (25.0 / 1_000_000.0));
         let target = credits * credit_price;
         assert!((calculated - target).abs() < 1e-6);
+    }
+
+    /// 模拟缓存上限测试：模拟缓存膨胀后的总 token (adjusted_in + cache_read + output) 不得超过 max_tokens_limit（如 200K / 272K）。
+    /// 且计费总额依然 100% 精确零误差。
+    #[test]
+    fn test_simulated_cache_capped_at_max_tokens_limit() {
+        let cost = ModelCost { input: 3.0, output: 15.0 };
+        let input_unit = cost.input / 1_000_000.0;
+        let output_unit = cost.output / 1_000_000.0;
+
+        // 设定预算：使得 final_in = 80,000。
+        // 若按 90% 缓存拆分，无上限时 total_prompt = 80,000 / (1 - 0.9 * 0.9) = 421,052 > 200,000！
+        let final_in_target = 80_000_u64;
+        let raw_out = 1_000_u64;
+        let credit_price = 1.0;
+        let target_amount = (final_in_target as f64) * input_unit + (raw_out as f64) * output_unit;
+        let credits = target_amount / credit_price;
+
+        let limit = 200_000_u64;
+
+        // 1. 未传 limit 时，正常膨胀至 > 400K
+        let adj_uncapped = calculate_tokens_by_credit(
+            1000, raw_out, credits, credit_price, &cost, true, 0.9, 0.9, true, None,
+        );
+        let total_uncapped = adj_uncapped.input_tokens + adj_uncapped.cache_read_tokens + adj_uncapped.output_tokens;
+        assert!(total_uncapped > 400_000, "未限制时应膨胀至 400K 以上，实际 {total_uncapped}");
+
+        // 2. 传入 limit = 200_000 时，总 token 被严格限制在 200,000 以内
+        let adj_capped = calculate_tokens_by_credit(
+            1000, raw_out, credits, credit_price, &cost, true, 0.9, 0.9, true, Some(limit),
+        );
+        let total_capped = adj_capped.input_tokens + adj_capped.cache_read_tokens + adj_capped.output_tokens;
+        assert!(
+            total_capped <= limit,
+            "总 token 绝不能超过官方限制 {limit}，实际 {total_capped}"
+        );
+        assert!(
+            total_capped >= 199_000,
+            "在不超过上限的前提下应尽可能利用上限，实际 {total_capped}"
+        );
+        assert!(adj_capped.cache_read_tokens > 0, "依然产生模拟缓存");
+
+        // 3. 金额必须 100% 精确，0 误差！
+        let downstream = (adj_capped.input_tokens as f64) * input_unit
+            + (adj_capped.cache_read_tokens as f64) * input_unit * 0.1
+            + (adj_capped.output_tokens as f64) * output_unit;
+        assert!((downstream - target_amount).abs() <= input_unit, "计费金额必须严格恒等");
+
+        // 4. 测试 272K 上限 (GPT-5.6 短上下文分界)
+        let limit_272k = 272_000_u64;
+        let adj_272k = calculate_tokens_by_credit(
+            1000, raw_out, credits, credit_price, &cost, true, 0.9, 0.9, true, Some(limit_272k),
+        );
+        let total_272k = adj_272k.input_tokens + adj_272k.cache_read_tokens + adj_272k.output_tokens;
+        assert!(
+            total_272k <= limit_272k,
+            "总 token 绝不能超过 272K 官方限制，实际 {total_272k}"
+        );
+        assert!(total_272k >= 271_000, "充分利用 272K 上限，实际 {total_272k}");
+        let downstream_272k = (adj_272k.input_tokens as f64) * input_unit
+            + (adj_272k.cache_read_tokens as f64) * input_unit * 0.1
+            + (adj_272k.output_tokens as f64) * output_unit;
+        assert!((downstream_272k - target_amount).abs() <= input_unit);
     }
 }
 

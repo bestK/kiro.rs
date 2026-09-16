@@ -1100,7 +1100,7 @@ fn isolation_seed(req: &MessagesRequest, key_id: u64) -> Option<String> {
     Some(format!("key:{key_id}"))
 }
 
-/// 从 Claude Code 的 user_id 中提取 session 标识。
+/// 从 Claude Code 的 user_id 或规范化的 session_{uuid} 中提取 session 标识。
 fn extract_session_id(user_id: &str) -> Option<String> {
     if let Ok(json) = serde_json::from_str::<serde_json::Value>(user_id)
         && let Some(sid) = json
@@ -1112,10 +1112,21 @@ fn extract_session_id(user_id: &str) -> Option<String> {
         return Some(sid.to_string());
     }
 
-    user_id
-        .split_once("_session_")
-        .map(|(_, sid)| sid.trim().to_string())
-        .filter(|s| !s.is_empty())
+    if let Some((_, sid)) = user_id.split_once("_session_") {
+        let sid = sid.trim();
+        if !sid.is_empty() {
+            return Some(sid.to_string());
+        }
+    }
+
+    if let Some(sid) = user_id.strip_prefix("session_") {
+        let sid = sid.trim();
+        if !sid.is_empty() {
+            return Some(sid.to_string());
+        }
+    }
+
+    None
 }
 
 fn validated_ttl(cache_control: &CacheControl) -> Option<i64> {
@@ -2892,8 +2903,13 @@ mod tests {
             extract_session_id("user_xxx_account__session_0b4445e1-uuid"),
             Some("0b4445e1-uuid".to_string())
         );
+        assert_eq!(
+            extract_session_id("session_0b4445e1-uuid"),
+            Some("0b4445e1-uuid".to_string())
+        );
         assert_eq!(extract_session_id("no-session-here"), None);
         assert_eq!(extract_session_id("trailing_session_"), None);
+        assert_eq!(extract_session_id("session_"), None);
     }
 
     #[test]

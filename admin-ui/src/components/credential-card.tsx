@@ -63,6 +63,7 @@ import {
   useForceRefreshToken,
   useResetSuccessCount,
   useClearThrottle,
+  useLoadBalancingMode,
 } from "@/hooks/use-credentials";
 import { setCredentialOverage, getProxyPool } from "@/api/credentials";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -395,7 +396,7 @@ function CredentialCardImpl({
   );
   const [editingLoadFactor, setEditingLoadFactor] = useState(false);
   const [loadFactorValue, setLoadFactorValue] = useState(
-    String(credential.loadFactor ?? 1),
+    String(credential.loadFactor ?? 10),
   );
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [showEditDialog, setShowEditDialog] = useState(false);
@@ -432,6 +433,10 @@ function CredentialCardImpl({
 
   const proxyUnhealthy = proxyEntry && (proxyEntry.health === 'unhealthy' || proxyEntry.autoDisabled);
 
+  const { data: lbData } = useLoadBalancingMode();
+  const isBalanced = lbData?.mode === "balanced";
+  const effectiveDragDisabled = dragDisabled || isBalanced;
+
   const {
     attributes,
     listeners,
@@ -440,7 +445,7 @@ function CredentialCardImpl({
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: credential.id, disabled: dragDisabled });
+  } = useSortable({ id: credential.id, disabled: effectiveDragDisabled });
   const dragStyle: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
     transition: isDragging ? "none" : transition,
@@ -878,8 +883,8 @@ function CredentialCardImpl({
           : "hover:bg-accent/40 hover:border-border"
       } ${stateClasses}`}
     >
-      {/* 拖拽手柄（字段排序开启时隐藏，此时拖拽无意义） */}
-      {!dragDisabled && (
+      {/* 拖拽手柄（均衡模式或字段排序开启时隐藏，此时拖拽无意义） */}
+      {!effectiveDragDisabled && (
         <Button
           ref={setActivatorNodeRef}
           size="icon"
@@ -934,143 +939,147 @@ function CredentialCardImpl({
       </div>
 
       <div className="hidden shrink-0 items-center gap-6 lg:flex">
-        <div className="relative w-16 shrink-0 text-center">
-          <div
-            className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/80"
-            title="优先级：数字越小越先被使用，0 最先"
-          >
-            优先级 ↑
-          </div>
-          <div className="mt-0.5 flex h-[26px] items-center justify-center">
-            {editingPriority ? (
-              <div className="absolute left-1/2 top-1/2 z-30 -translate-x-1/2 -translate-y-1/2 rounded-md border border-border bg-popover p-1.5 shadow-md">
-                <div className="inline-flex items-center gap-1">
-                  <Input
-                    type="number"
-                    value={priorityValue}
-                    onChange={(e) => setPriorityValue(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") handlePriorityChange();
-                      if (e.key === "Escape") {
+        {!isBalanced && (
+          <div className="relative w-16 shrink-0 text-center">
+            <div
+              className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/80"
+              title="优先级：数字越小越先被使用，0 最先"
+            >
+              优先级 ↑
+            </div>
+            <div className="mt-0.5 flex h-[26px] items-center justify-center">
+              {editingPriority ? (
+                <div className="absolute left-1/2 top-1/2 z-30 -translate-x-1/2 -translate-y-1/2 rounded-md border border-border bg-popover p-1.5 shadow-md">
+                  <div className="inline-flex items-center gap-1">
+                    <Input
+                      type="number"
+                      value={priorityValue}
+                      onChange={(e) => setPriorityValue(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") handlePriorityChange();
+                        if (e.key === "Escape") {
+                          setEditingPriority(false);
+                          setPriorityValue(String(credential.priority));
+                        }
+                      }}
+                      className="h-7 w-16 rounded-md text-sm font-mono"
+                      min="0"
+                      autoFocus
+                    />
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-7 w-7 text-emerald-600"
+                      onClick={handlePriorityChange}
+                      disabled={setPriority.isPending}
+                      title="确认"
+                    >
+                      ✓
+                    </Button>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-7 w-7 text-muted-foreground"
+                      onClick={() => {
                         setEditingPriority(false);
                         setPriorityValue(String(credential.priority));
-                      }
-                    }}
-                    className="h-7 w-16 rounded-md text-sm font-mono"
-                    min="0"
-                    autoFocus
-                  />
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    className="h-7 w-7 text-emerald-600"
-                    onClick={handlePriorityChange}
-                    disabled={setPriority.isPending}
-                    title="确认"
-                  >
-                    ✓
-                  </Button>
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    className="h-7 w-7 text-muted-foreground"
-                    onClick={() => {
-                      setEditingPriority(false);
-                      setPriorityValue(String(credential.priority));
-                    }}
-                    title="取消"
-                  >
-                    ✕
-                  </Button>
+                      }}
+                      title="取消"
+                    >
+                      ✕
+                    </Button>
+                  </div>
+                  <div className="mt-1 whitespace-nowrap px-1 text-center">
+                    <PriorityPreview
+                      credentialId={credential.id}
+                      draft={priorityValue}
+                      disabled={credential.disabled}
+                    />
+                  </div>
                 </div>
-                <div className="mt-1 whitespace-nowrap px-1 text-center">
-                  <PriorityPreview
-                    credentialId={credential.id}
-                    draft={priorityValue}
-                    disabled={credential.disabled}
-                  />
-                </div>
-              </div>
-            ) : (
-              <button
-                type="button"
-                className="inline-flex items-center gap-1 rounded-md px-2 py-0.5 font-mono text-xs font-semibold tabular-nums transition-colors hover:bg-accent hover:text-primary"
-                onClick={() => setEditingPriority(true)}
-                title={credential.isCurrent ? "当前调度优先凭据 · 点击编辑" : "点击编辑优先级"}
-              >
-                {credential.isCurrent && (
-                  <Flag className="h-3 w-3 fill-emerald-500 text-emerald-500 shrink-0" />
-                )}
-                #{credential.priority}
-                <Pencil className="h-3 w-3 opacity-60" />
-              </button>
-            )}
+              ) : (
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1 rounded-md px-2 py-0.5 font-mono text-xs font-semibold tabular-nums transition-colors hover:bg-accent hover:text-primary"
+                  onClick={() => setEditingPriority(true)}
+                  title={credential.isCurrent ? "当前调度优先凭据 · 点击编辑" : "点击编辑优先级"}
+                >
+                  {credential.isCurrent && (
+                    <Flag className="h-3 w-3 fill-emerald-500 text-emerald-500 shrink-0" />
+                  )}
+                  #{credential.priority}
+                  <Pencil className="h-3 w-3 opacity-60" />
+                </button>
+              )}
+            </div>
           </div>
-        </div>
+        )}
 
-        <div className="relative w-16 shrink-0 text-center">
-          <div
-            className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/80"
-            title="负载因子：均衡模式下平滑加权轮询权重，数值越大调度频次越高，默认为 1"
-          >
-            权重
-          </div>
-          <div className="mt-0.5 flex h-[26px] items-center justify-center">
-            {editingLoadFactor ? (
-              <div className="absolute left-1/2 top-1/2 z-30 -translate-x-1/2 -translate-y-1/2 rounded-md border border-border bg-popover p-1.5 shadow-md">
-                <div className="inline-flex items-center gap-1">
-                  <Input
-                    type="number"
-                    value={loadFactorValue}
-                    onChange={(e) => setLoadFactorValue(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") handleLoadFactorChange();
-                      if (e.key === "Escape") {
+        {isBalanced && (
+          <div className="relative w-16 shrink-0 text-center">
+            <div
+              className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/80"
+              title="负载因子：均衡模式下平滑加权轮询权重，数值越大调度频次越高，默认为 1"
+            >
+              权重
+            </div>
+            <div className="mt-0.5 flex h-[26px] items-center justify-center">
+              {editingLoadFactor ? (
+                <div className="absolute left-1/2 top-1/2 z-30 -translate-x-1/2 -translate-y-1/2 rounded-md border border-border bg-popover p-1.5 shadow-md">
+                  <div className="inline-flex items-center gap-1">
+                    <Input
+                      type="number"
+                      value={loadFactorValue}
+                      onChange={(e) => setLoadFactorValue(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") handleLoadFactorChange();
+                        if (e.key === "Escape") {
+                          setEditingLoadFactor(false);
+                          setLoadFactorValue(String(credential.loadFactor ?? 10));
+                        }
+                      }}
+                      className="h-7 w-16 rounded-md text-sm font-mono"
+                      min="1"
+                      autoFocus
+                    />
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-7 w-7 text-emerald-600"
+                      onClick={handleLoadFactorChange}
+                      disabled={setLoadFactor.isPending}
+                      title="确认"
+                    >
+                      ✓
+                    </Button>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-7 w-7 text-muted-foreground"
+                      onClick={() => {
                         setEditingLoadFactor(false);
-                        setLoadFactorValue(String(credential.loadFactor ?? 1));
-                      }
-                    }}
-                    className="h-7 w-16 rounded-md text-sm font-mono"
-                    min="1"
-                    autoFocus
-                  />
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    className="h-7 w-7 text-emerald-600"
-                    onClick={handleLoadFactorChange}
-                    disabled={setLoadFactor.isPending}
-                    title="确认"
-                  >
-                    ✓
-                  </Button>
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    className="h-7 w-7 text-muted-foreground"
-                    onClick={() => {
-                      setEditingLoadFactor(false);
-                      setLoadFactorValue(String(credential.loadFactor ?? 1));
-                    }}
-                    title="取消"
-                  >
-                    ✕
-                  </Button>
+                        setLoadFactorValue(String(credential.loadFactor ?? 10));
+                      }}
+                      title="取消"
+                    >
+                      ✕
+                    </Button>
+                  </div>
                 </div>
-              </div>
-            ) : (
-              <button
-                type="button"
-                className="inline-flex items-center gap-1 rounded-md px-2 py-0.5 font-mono text-xs font-semibold tabular-nums transition-colors hover:bg-accent hover:text-primary"
-                onClick={() => setEditingLoadFactor(true)}
-                title="负载因子：均衡模式下平滑加权轮询权重，点击编辑"
-              >
-                {credential.loadFactor ?? 1}x
-                <Pencil className="h-3 w-3 opacity-60" />
-              </button>
-            )}
+              ) : (
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1 rounded-md px-2 py-0.5 font-mono text-xs font-semibold tabular-nums transition-colors hover:bg-accent hover:text-primary"
+                  onClick={() => setEditingLoadFactor(true)}
+                  title="负载因子：均衡模式下平滑加权轮询权重，点击编辑"
+                >
+                  {credential.loadFactor ?? 10}x
+                  <Pencil className="h-3 w-3 opacity-60" />
+                </button>
+              )}
+            </div>
           </div>
-        </div>
+        )}
 
         <div className="w-20 text-center">
           <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/80">
@@ -1298,52 +1307,92 @@ function CredentialCardImpl({
           <CardContent className="flex flex-1 flex-col p-4 space-y-3.5">
             {/* 核心指标 (Metrics Grid) */}
             <div className="grid grid-cols-4 divide-x divide-border/30 text-center py-1">
-              {/* Priority */}
+              {/* Priority / Weight */}
               <div className="flex flex-col items-center justify-center px-1">
                 <span className="text-[10px] font-semibold text-muted-foreground/80 uppercase tracking-wider">
-                  优先级/权重
+                  {isBalanced ? "权重" : "优先级"}
                 </span>
-                {editingPriority ? (
-                  <div className="mt-1 flex items-center justify-center gap-0.5">
-                    <Input
-                      type="number"
-                      value={priorityValue}
-                      onChange={(e) => setPriorityValue(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") handlePriorityChange();
-                        if (e.key === "Escape") {
-                          setEditingPriority(false);
-                          setPriorityValue(String(credential.priority));
-                        }
-                      }}
-                      className="h-6 w-12 text-center text-xs font-mono p-0"
-                      min="0"
-                      autoFocus
-                    />
+                {isBalanced ? (
+                  editingLoadFactor ? (
+                    <div className="mt-1 flex items-center justify-center gap-0.5">
+                      <Input
+                        type="number"
+                        value={loadFactorValue}
+                        onChange={(e) => setLoadFactorValue(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") handleLoadFactorChange();
+                          if (e.key === "Escape") {
+                            setEditingLoadFactor(false);
+                            setLoadFactorValue(String(credential.loadFactor ?? 10));
+                          }
+                        }}
+                        className="h-6 w-12 text-center text-xs font-mono p-0"
+                        min="1"
+                        autoFocus
+                      />
+                      <button
+                        type="button"
+                        onClick={handleLoadFactorChange}
+                        className="text-xs text-emerald-600 font-bold px-1"
+                      >
+                        ✓
+                      </button>
+                    </div>
+                  ) : (
                     <button
                       type="button"
-                      onClick={handlePriorityChange}
-                      className="text-xs text-emerald-600 font-bold px-1"
+                      onClick={() => {
+                        if (!preview) setEditingLoadFactor(true);
+                      }}
+                      className={`mt-0.5 inline-flex items-center gap-1 rounded-md px-2 py-0.5 font-mono text-xs font-semibold border transition-colors hover:brightness-105 ${railChipClass(disposition.tone)}`}
+                      title="负载因子：均衡模式下平滑加权轮询权重，点击编辑"
                     >
-                      ✓
+                      <span>{credential.loadFactor ?? 10}x</span>
+                      <Pencil className="h-2.5 w-2.5 opacity-60" />
                     </button>
-                  </div>
+                  )
                 ) : (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (!preview) setEditingPriority(true);
-                    }}
-                    className={`mt-0.5 inline-flex items-center gap-1 rounded-md px-2 py-0.5 font-mono text-xs font-semibold border transition-colors hover:brightness-105 ${railChipClass(disposition.tone)}`}
-                    title={credential.isCurrent ? "当前调度优先凭据 · 点击编辑优先级" : "点击编辑优先级（数字越小越先被使用）"}
-                  >
-                    {credential.isCurrent && (
-                      <Flag className="h-3 w-3 fill-emerald-500 text-emerald-500 shrink-0" />
-                    )}
-                    <span>#{credential.priority}</span>
-                    <span className="text-[10px] opacity-70">({credential.loadFactor ?? 1}x)</span>
-                    <Pencil className="h-2.5 w-2.5 opacity-60" />
-                  </button>
+                  editingPriority ? (
+                    <div className="mt-1 flex items-center justify-center gap-0.5">
+                      <Input
+                        type="number"
+                        value={priorityValue}
+                        onChange={(e) => setPriorityValue(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") handlePriorityChange();
+                          if (e.key === "Escape") {
+                            setEditingPriority(false);
+                            setPriorityValue(String(credential.priority));
+                          }
+                        }}
+                        className="h-6 w-12 text-center text-xs font-mono p-0"
+                        min="0"
+                        autoFocus
+                      />
+                      <button
+                        type="button"
+                        onClick={handlePriorityChange}
+                        className="text-xs text-emerald-600 font-bold px-1"
+                      >
+                        ✓
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!preview) setEditingPriority(true);
+                      }}
+                      className={`mt-0.5 inline-flex items-center gap-1 rounded-md px-2 py-0.5 font-mono text-xs font-semibold border transition-colors hover:brightness-105 ${railChipClass(disposition.tone)}`}
+                      title={credential.isCurrent ? "当前调度优先凭据 · 点击编辑优先级" : "点击编辑优先级（数字越小越先被使用）"}
+                    >
+                      {credential.isCurrent && (
+                        <Flag className="h-3 w-3 fill-emerald-500 text-emerald-500 shrink-0" />
+                      )}
+                      <span>#{credential.priority}</span>
+                      <Pencil className="h-2.5 w-2.5 opacity-60" />
+                    </button>
+                  )
                 )}
               </div>
 
@@ -1617,7 +1666,7 @@ function CredentialCardImpl({
               </div>
             ) : (
               <div className="mt-auto flex min-w-0 items-center gap-2 pt-2.5 border-t border-border">
-                {!dragDisabled && (
+                {!effectiveDragDisabled && (
                   <Button
                     ref={setActivatorNodeRef}
                     size="icon"

@@ -357,7 +357,7 @@ fn default_auth_method() -> String {
 }
 
 fn default_load_factor() -> u32 {
-    1
+    10
 }
 
 /// 更新 refreshToken 请求

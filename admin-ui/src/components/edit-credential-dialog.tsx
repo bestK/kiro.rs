@@ -63,7 +63,7 @@ export function EditCredentialDialog({
   const [proxyPassword, setProxyPassword] = useState('')
   const [groups, setGroups] = useState<string[]>(credential.groups ?? [])
   const [sourceChannel, setSourceChannel] = useState(credential.sourceChannel ?? '')
-  const [loadFactor, setLoadFactor] = useState<number>(credential.loadFactor ?? 1)
+  const [loadFactor, setLoadFactor] = useState<number>(credential.loadFactor ?? 10)
   const [metadata, setMetadata] = useState<CredentialMetadata>(
     { ...metadataDefaults(metadataSchema), ...metadataValues(credential.metadata) },
   )
@@ -87,7 +87,7 @@ export function EditCredentialDialog({
       setProxyPassword('')
       setGroups(credential.groups ?? [])
       setSourceChannel(credential.sourceChannel ?? '')
-      setLoadFactor(credential.loadFactor ?? 1)
+      setLoadFactor(credential.loadFactor ?? 10)
       setMetadata({
         ...metadataDefaults(metadataSchema),
         ...metadataValues(credential.metadata),
@@ -111,7 +111,7 @@ export function EditCredentialDialog({
           proxyPassword: proxyPassword || undefined,
           groups: groups,
           sourceChannel: sourceChannel,
-          loadFactor: Number.isFinite(loadFactor) && loadFactor >= 1 ? loadFactor : 1,
+          loadFactor: Number.isFinite(loadFactor) && loadFactor >= 1 ? loadFactor : 10,
           metadata,
         },
       },
@@ -233,13 +233,13 @@ export function EditCredentialDialog({
                     id="loadFactor"
                     type="number"
                     min="1"
-                    placeholder="默认 1"
+                    placeholder="默认 10"
                     value={loadFactor}
-                    onChange={(e) => setLoadFactor(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                    onChange={(e) => setLoadFactor(Math.max(1, parseInt(e.target.value, 10) || 10))}
                     disabled={isPending}
                   />
                   <p className="text-xs text-muted-foreground">
-                    均衡模式（SWRR 平滑加权轮询）下的调度权重，数值越大被调度频次越高，默认为 1。
+                    均衡模式（SWRR 平滑加权轮询）下的调度权重，数值越大被调度频次越高，默认为 10。
                   </p>
                 </div>
 

@@ -192,6 +192,7 @@ export function CredentialTable({
 }: CredentialTableProps) {
   const { data: lbData } = useLoadBalancingMode();
   const invertPriority = lbData?.invertPriority ?? false;
+  const isBalanced = lbData?.mode === "balanced";
 
   return (
     <div className="overflow-x-auto rounded-xl border border-border bg-card shadow-xs select-none">
@@ -262,12 +263,14 @@ export function CredentialTable({
               onSort={onSort}
               className="min-w-[95px]"
               title={
-                invertPriority
-                  ? "优先级（大优先）/ 负载因子（SWRR 权重）"
-                  : "优先级（小优先）/ 负载因子（SWRR 权重）"
+                isBalanced
+                  ? "点击按负载因子（权重）排序（再次点击切换升/降序）"
+                  : invertPriority
+                    ? "点击按调度优先级排序（大优先，再次点击切换升/降序）"
+                    : "点击按调度优先级排序（小优先，再次点击切换升/降序）"
               }
             >
-              优先级 / 权重
+              {isBalanced ? "权重" : "优先级"}
             </TableSortHeader>
 
             {/* 成功 / 失败 */}
@@ -383,9 +386,11 @@ function CredentialTableRowComponent({
   const [editingPriority, setEditingPriority] = useState(false);
   const [priorityValue, setPriorityValue] = useState(String(credential.priority));
   const [editingLoadFactor, setEditingLoadFactor] = useState(false);
-  const [loadFactorValue, setLoadFactorValue] = useState(String(credential.loadFactor ?? 1));
+  const [loadFactorValue, setLoadFactorValue] = useState(String(credential.loadFactor ?? 10));
   const { data: lbData } = useLoadBalancingMode();
   const invertPriority = lbData?.invertPriority ?? false;
+  const isBalanced = lbData?.mode === "balanced";
+  const effectiveDragDisabled = dragDisabled || isBalanced;
 
   const [showEditDialog, setShowEditDialog] = useState(false);
   const [showUpdateTokenDialog, setShowUpdateTokenDialog] = useState(false);
@@ -426,7 +431,7 @@ function CredentialTableRowComponent({
     isDragging,
   } = useSortable({
     id: credential.id,
-    disabled: dragDisabled || preview,
+    disabled: effectiveDragDisabled || preview,
   });
 
   const rowStyle = {
@@ -578,7 +583,7 @@ function CredentialTableRowComponent({
           )}
         >
           <div className="flex items-center justify-center gap-1">
-            {!dragDisabled && !preview && (
+            {!effectiveDragDisabled && !preview && (
               <button
                 type="button"
                 {...attributes}
@@ -760,106 +765,111 @@ function CredentialTableRowComponent({
           </div>
         </td>
 
-        {/* 优先级与权重 (双行：优先级/权重按钮 + 当前优先指示) */}
+        {/* 优先级与权重 */}
         <td className="px-2.5 py-1.5 min-w-[95px] whitespace-nowrap">
           <div className="flex flex-col gap-0.5">
             <div className="flex items-center gap-1.5">
-              {editingPriority ? (
-                <div className="flex items-center gap-0.5">
-                  <Input
-                    type="number"
-                    value={priorityValue}
-                    onChange={(e) => setPriorityValue(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") handlePriorityChange();
-                      if (e.key === "Escape") {
-                        setEditingPriority(false);
-                        setPriorityValue(String(credential.priority));
-                      }
-                    }}
-                    className="h-5 w-11 text-center text-xs font-mono p-0"
-                    min="0"
-                    autoFocus
-                  />
+              {isBalanced ? (
+                /* 均衡模式仅展示 权重 / 负载因子 */
+                editingLoadFactor ? (
+                  <div className="flex items-center gap-0.5">
+                    <Input
+                      type="number"
+                      value={loadFactorValue}
+                      onChange={(e) => setLoadFactorValue(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") handleLoadFactorChange();
+                        if (e.key === "Escape") {
+                          setEditingLoadFactor(false);
+                          setLoadFactorValue(String(credential.loadFactor ?? 10));
+                        }
+                      }}
+                      className="h-5 w-10 text-center text-xs font-mono p-0"
+                      min="1"
+                      autoFocus
+                    />
+                    <button
+                      type="button"
+                      onClick={handleLoadFactorChange}
+                      className="text-xs text-emerald-600 font-bold px-0.5"
+                    >
+                      ✓
+                    </button>
+                  </div>
+                ) : (
                   <button
                     type="button"
-                    onClick={handlePriorityChange}
-                    className="text-xs text-emerald-600 font-bold px-1"
-                  >
-                    ✓
-                  </button>
-                </div>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (!preview) setEditingPriority(true);
-                  }}
-                  className="inline-flex items-center gap-1 font-mono text-xs font-semibold text-foreground hover:text-primary transition-colors text-left"
-                  title={
-                    invertPriority
-                      ? "点击修改优先级（数字越大越先被使用）"
-                      : "点击修改优先级（数字越小越先被使用）"
-                  }
-                >
-                  #{credential.priority}
-                  <Pencil className="h-2.5 w-2.5 opacity-40 hover:opacity-100" />
-                </button>
-              )}
-
-              {/* 负载因子/权重 */}
-              {editingLoadFactor ? (
-                <div className="flex items-center gap-0.5">
-                  <Input
-                    type="number"
-                    value={loadFactorValue}
-                    onChange={(e) => setLoadFactorValue(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") handleLoadFactorChange();
-                      if (e.key === "Escape") {
-                        setEditingLoadFactor(false);
-                        setLoadFactorValue(String(credential.loadFactor ?? 1));
-                      }
+                    onClick={() => {
+                      if (!preview) setEditingLoadFactor(true);
                     }}
-                    className="h-5 w-10 text-center text-xs font-mono p-0"
-                    min="1"
-                    autoFocus
-                  />
+                    className="inline-flex items-center gap-0.5 text-xs font-mono font-semibold px-1.5 py-0.5 rounded bg-muted/70 text-foreground hover:bg-muted hover:text-primary transition-colors"
+                    title="负载因子：均衡模式下平滑加权轮询权重（越大调度越频），点击编辑"
+                  >
+                    <span>{credential.loadFactor ?? 10}x</span>
+                    <Pencil className="h-2.5 w-2.5 opacity-40 hover:opacity-100" />
+                  </button>
+                )
+              ) : (
+                /* 优先级模式仅展示 调度优先级 */
+                editingPriority ? (
+                  <div className="flex items-center gap-0.5">
+                    <Input
+                      type="number"
+                      value={priorityValue}
+                      onChange={(e) => setPriorityValue(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") handlePriorityChange();
+                        if (e.key === "Escape") {
+                          setEditingPriority(false);
+                          setPriorityValue(String(credential.priority));
+                        }
+                      }}
+                      className="h-5 w-11 text-center text-xs font-mono p-0"
+                      min="0"
+                      autoFocus
+                    />
+                    <button
+                      type="button"
+                      onClick={handlePriorityChange}
+                      className="text-xs text-emerald-600 font-bold px-1"
+                    >
+                      ✓
+                    </button>
+                  </div>
+                ) : (
                   <button
                     type="button"
-                    onClick={handleLoadFactorChange}
-                    className="text-xs text-emerald-600 font-bold px-0.5"
+                    onClick={() => {
+                      if (!preview) setEditingPriority(true);
+                    }}
+                    className="inline-flex items-center gap-1 font-mono text-xs font-semibold text-foreground hover:text-primary transition-colors text-left"
+                    title={
+                      invertPriority
+                        ? "点击修改优先级（数字越大越先被使用）"
+                        : "点击修改优先级（数字越小越先被使用）"
+                    }
                   >
-                    ✓
+                    #{credential.priority}
+                    <Pencil className="h-2.5 w-2.5 opacity-40 hover:opacity-100" />
                   </button>
-                </div>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (!preview) setEditingLoadFactor(true);
-                  }}
-                  className="inline-flex items-center gap-0.5 text-[10px] font-mono px-1 py-0.5 rounded bg-muted/70 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-                  title="负载因子：均衡模式下平滑加权轮询权重（越大调度越频），点击编辑"
-                >
-                  <span>{credential.loadFactor ?? 1}x</span>
-                  <Pencil className="h-2 w-2 opacity-30 hover:opacity-100" />
-                </button>
+                )
               )}
             </div>
 
-            <div>
-              {credential.isCurrent ? (
-                <span className="inline-flex items-center gap-0.5 text-[10px] text-emerald-600 dark:text-emerald-400 font-medium font-mono">
-                  <Flag className="h-2.5 w-2.5 fill-current" />
-                  当前调度
-                </span>
-              ) : (
-                <span className="text-[10px] text-muted-foreground/50 font-mono">
-                  顺序排队
-                </span>
-              )}
-            </div>
+            {!isBalanced && (
+              <div>
+                {credential.isCurrent ? (
+                  <span className="inline-flex items-center gap-0.5 text-[10px] text-emerald-600 dark:text-emerald-400 font-medium font-mono">
+                    <Flag className="h-2.5 w-2.5 fill-current" />
+                    当前调度
+                  </span>
+                ) : (
+                  <span className="text-[10px] text-muted-foreground/50 font-mono">
+                    顺序排队
+                  </span>
+                )}
+              </div>
+            )}
           </div>
         </td>
 

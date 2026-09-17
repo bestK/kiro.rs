@@ -54,7 +54,7 @@ function AddCredentialDialogInner({ open, onOpenChange, metadataSchema }: AddCre
   const [endpoint, setEndpoint] = useState('')
   const [groups, setGroups] = useState<string[]>([])
   const [sourceChannel, setSourceChannel] = useState('')
-  const [loadFactor, setLoadFactor] = useState<number>(1)
+  const [loadFactor, setLoadFactor] = useState<number>(10)
   const [metadata, setMetadata] = useState<CredentialMetadata>({
     type: 'normal',
     saleStatus: 'not_for_sale',
@@ -88,7 +88,7 @@ function AddCredentialDialogInner({ open, onOpenChange, metadataSchema }: AddCre
     setEndpoint('')
     setGroups([])
     setSourceChannel('')
-    setLoadFactor(1)
+    setLoadFactor(10)
     setMetadata(metadataDefaults(metadataSchema))
   }
 
@@ -141,7 +141,7 @@ function AddCredentialDialogInner({ open, onOpenChange, metadataSchema }: AddCre
         endpoint: endpoint.trim() || undefined,
         groups: groups,
         sourceChannel: sourceChannel.trim() || undefined,
-        loadFactor: Number.isFinite(loadFactor) && loadFactor >= 1 ? loadFactor : 1,
+        loadFactor: Number.isFinite(loadFactor) && loadFactor >= 1 ? loadFactor : 10,
         metadata,
       },
       {
@@ -475,13 +475,13 @@ function AddCredentialDialogInner({ open, onOpenChange, metadataSchema }: AddCre
                 id="loadFactor"
                 type="number"
                 min="1"
-                placeholder="默认 1"
+                placeholder="默认 10"
                 value={loadFactor}
-                onChange={(e) => setLoadFactor(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                onChange={(e) => setLoadFactor(Math.max(1, parseInt(e.target.value, 10) || 10))}
                 disabled={isPending}
               />
               <p className="text-xs text-muted-foreground">
-                可选。均衡模式（SWRR 平滑加权轮询）下的调度权重，数值越大被调度频次越高，默认为 1。
+                可选。均衡模式（SWRR 平滑加权轮询）下的调度权重，数值越大被调度频次越高，默认为 10。
               </p>
             </div>
 

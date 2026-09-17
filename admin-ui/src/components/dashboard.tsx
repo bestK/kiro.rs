@@ -480,6 +480,7 @@ export function Dashboard({ onLogout, embedded = false }: DashboardProps) {
     useLoadBalancingMode();
   const { mutate: setLoadBalancingMode, isPending: isSettingMode } =
     useSetLoadBalancingMode();
+  const isBalanced = loadBalancingData?.mode === "balanced";
   const resetAllSuccess = useResetAllSuccessCount();
   const setPriority = useSetPriority();
   const { data: updateCheck } = useUpdateCheck();
@@ -577,7 +578,9 @@ export function Dashboard({ onLogout, embedded = false }: DashboardProps) {
             break;
           }
           case "priority":
-            cmp = a.priority - b.priority;
+            cmp = isBalanced
+              ? (a.loadFactor ?? 10) - (b.loadFactor ?? 10)
+              : a.priority - b.priority;
             break;
           case "inFlight":
             cmp = (a.inFlight ?? 0) - (b.inFlight ?? 0);
@@ -688,8 +691,8 @@ export function Dashboard({ onLogout, embedded = false }: DashboardProps) {
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
   );
 
-  // 字段排序开启时禁止拖拽调优先级（拖拽只在“手动顺序”下有意义）
-  const dragDisabled = sortField !== "manual";
+  // 均衡模式下优先级不起作用，或字段排序开启时，禁止拖拽调优先级（拖拽只在优先级模式且“手动顺序”下有意义）
+  const dragDisabled = sortField !== "manual" || isBalanced;
 
   const handleDragEnd = (event: DragEndEvent) => {
     if (dragDisabled) return;
@@ -1851,7 +1854,7 @@ export function Dashboard({ onLogout, embedded = false }: DashboardProps) {
                       ) : (
                         <ArrowDown className="h-3.5 w-3.5 shrink-0 text-primary" />
                       )}
-                      <span className="truncate">{SORT_LABELS[sortField]}</span>
+                      <span className="truncate">{sortField === "priority" && isBalanced ? "权重" : SORT_LABELS[sortField]}</span>
                     </span>
                     <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-60" />
                   </button>
@@ -1866,7 +1869,7 @@ export function Dashboard({ onLogout, embedded = false }: DashboardProps) {
                     className="gap-2"
                   >
                     <ArrowUpDown className="h-3.5 w-3.5 opacity-70" />
-                    <span>手动顺序（可拖拽）</span>
+                    <span>{isBalanced ? "手动顺序" : "手动顺序（可拖拽）"}</span>
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
                   {SORT_OPTIONS.map((o) => {
@@ -1880,7 +1883,7 @@ export function Dashboard({ onLogout, embedded = false }: DashboardProps) {
                         }}
                         className="justify-between gap-2"
                       >
-                        <span>{o.label}</span>
+                        <span>{o.value === "priority" && isBalanced ? "权重" : o.label}</span>
                         {active &&
                           (sortDir === "asc" ? (
                             <ArrowUp className="h-3.5 w-3.5 text-primary" />

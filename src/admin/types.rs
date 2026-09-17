@@ -123,6 +123,8 @@ pub struct CredentialStatusItem {
     pub id: u64,
     /// 优先级（数字越小优先级越高）
     pub priority: u32,
+    /// 负载因子（权重，数值越大调度频次越高，默认为 1）
+    pub load_factor: u32,
     /// 是否被禁用
     pub disabled: bool,
     /// 连续失败次数
@@ -237,6 +239,15 @@ pub struct SetPriorityRequest {
     pub priority: u32,
 }
 
+/// 修改负载因子请求
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetLoadFactorRequest {
+    /// 新负载因子值（>= 1）
+    #[serde(alias = "weight")]
+    pub load_factor: u32,
+}
+
 /// 添加凭据请求
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -290,6 +301,11 @@ pub struct AddCredentialRequest {
     #[serde(default)]
     pub priority: u32,
 
+    /// 负载因子（权重，数值越大调度频次越高，可选，默认 1）
+    #[serde(default = "default_load_factor")]
+    #[serde(alias = "weight")]
+    pub load_factor: u32,
+
     /// 凭据级 Region 配置（用于 OIDC token 刷新）
     /// 未配置时回退到 config.json 的全局 region
     pub region: Option<String>,
@@ -340,6 +356,10 @@ fn default_auth_method() -> String {
     "social".to_string()
 }
 
+fn default_load_factor() -> u32 {
+    1
+}
+
 /// 更新 refreshToken 请求
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -375,6 +395,10 @@ pub struct UpdateCredentialRequest {
     /// 凭据扩展元数据（None 表示不修改）
     #[serde(default)]
     pub metadata: Option<CredentialMetadata>,
+    /// 负载因子（权重，数值越大调度频次越高，>= 1，None 表示不修改）
+    #[serde(default)]
+    #[serde(alias = "weight")]
+    pub load_factor: Option<u32>,
 }
 
 /// 添加凭据成功响应

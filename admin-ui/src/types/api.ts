@@ -139,6 +139,8 @@ export interface CredentialStatusItem {
   balanceUpdatedAt?: number
   /** 凭据添加（创建）时间（RFC3339 格式）；旧凭据缺失时为 undefined */
   createdAt?: string
+  /** 负载因子（权重，数值越大调度频次越高，默认为 1） */
+  loadFactor?: number
 }
 
 // 凭据列表排序字段：'manual' = 服务端顺序（保留拖拽调优先级）；其余字段选中后拖拽自动禁用
@@ -224,6 +226,10 @@ export interface SetPriorityRequest {
   priority: number
 }
 
+export interface SetLoadFactorRequest {
+  loadFactor: number
+}
+
 // 添加凭据请求
 export interface AddCredentialRequest {
   refreshToken?: string
@@ -242,6 +248,8 @@ export interface AddCredentialRequest {
   /** 企业 SSO 授予的 scopes（空格分隔，可选） */
   scopes?: string
   priority?: number
+  /** 负载因子（权重，数值越大调度频次越高，默认为 1） */
+  loadFactor?: number
   authRegion?: string
   apiRegion?: string
   machineId?: string
@@ -274,6 +282,8 @@ export interface UpdateCredentialRequest {
   groups?: string[]
   /** 账号来源渠道（undefined 表示不修改，空串表示清除） */
   sourceChannel?: string
+  /** 负载因子（权重，数值越大调度频次越高，默认为 1） */
+  loadFactor?: number
   /** 整体更新 metadata；调用方应保留不认识的扩展字段 */
   metadata?: CredentialMetadata
 }

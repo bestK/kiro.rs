@@ -9,6 +9,7 @@ import type {
   SuccessResponse,
   SetDisabledRequest,
   SetPriorityRequest,
+  SetLoadFactorRequest,
   AddCredentialRequest,
   AddCredentialResponse,
   CustomModelItem,
@@ -159,6 +160,18 @@ export async function setCredentialPriority(
   const { data } = await api.post<SuccessResponse>(
     `/credentials/${id}/priority`,
     { priority } as SetPriorityRequest
+  )
+  return data
+}
+
+// 设置凭据负载因子（权重）
+export async function setCredentialLoadFactor(
+  id: number,
+  loadFactor: number
+): Promise<SuccessResponse> {
+  const { data } = await api.post<SuccessResponse>(
+    `/credentials/${id}/load-factor`,
+    { loadFactor } as SetLoadFactorRequest
   )
   return data
 }

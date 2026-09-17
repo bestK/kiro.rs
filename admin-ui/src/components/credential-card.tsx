@@ -57,6 +57,7 @@ import { maskProxyUrl, extractErrorMessage, overageFailureMessage, formatBalance
 import {
   useSetDisabled,
   useSetPriority,
+  useSetLoadFactor,
   useResetFailure,
   useDeleteCredential,
   useForceRefreshToken,
@@ -392,6 +393,10 @@ function CredentialCardImpl({
   const [priorityValue, setPriorityValue] = useState(
     String(credential.priority),
   );
+  const [editingLoadFactor, setEditingLoadFactor] = useState(false);
+  const [loadFactorValue, setLoadFactorValue] = useState(
+    String(credential.loadFactor ?? 1),
+  );
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [showEditDialog, setShowEditDialog] = useState(false);
   const [showUpdateTokenDialog, setShowUpdateTokenDialog] = useState(false);
@@ -403,6 +408,7 @@ function CredentialCardImpl({
 
   const setDisabled = useSetDisabled();
   const setPriority = useSetPriority();
+  const setLoadFactor = useSetLoadFactor();
   const resetFailure = useResetFailure();
   const deleteCredential = useDeleteCredential();
   const forceRefresh = useForceRefreshToken();
@@ -517,6 +523,24 @@ function CredentialCardImpl({
         onSuccess: (res) => {
           toast.success(res.message);
           setEditingPriority(false);
+        },
+        onError: (err) => toast.error("操作失败: " + (err as Error).message),
+      },
+    );
+  };
+
+  const handleLoadFactorChange = () => {
+    const lf = parseInt(loadFactorValue, 10);
+    if (isNaN(lf) || lf < 1) {
+      toast.error("负载因子必须为 1 或更大的整数");
+      return;
+    }
+    setLoadFactor.mutate(
+      { id: credential.id, loadFactor: lf },
+      {
+        onSuccess: (res) => {
+          toast.success(res.message);
+          setEditingLoadFactor(false);
         },
         onError: (err) => toast.error("操作失败: " + (err as Error).message),
       },
@@ -984,6 +1008,70 @@ function CredentialCardImpl({
           </div>
         </div>
 
+        <div className="relative w-16 shrink-0 text-center">
+          <div
+            className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/80"
+            title="负载因子：均衡模式下平滑加权轮询权重，数值越大调度频次越高，默认为 1"
+          >
+            权重
+          </div>
+          <div className="mt-0.5 flex h-[26px] items-center justify-center">
+            {editingLoadFactor ? (
+              <div className="absolute left-1/2 top-1/2 z-30 -translate-x-1/2 -translate-y-1/2 rounded-md border border-border bg-popover p-1.5 shadow-md">
+                <div className="inline-flex items-center gap-1">
+                  <Input
+                    type="number"
+                    value={loadFactorValue}
+                    onChange={(e) => setLoadFactorValue(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") handleLoadFactorChange();
+                      if (e.key === "Escape") {
+                        setEditingLoadFactor(false);
+                        setLoadFactorValue(String(credential.loadFactor ?? 1));
+                      }
+                    }}
+                    className="h-7 w-16 rounded-md text-sm font-mono"
+                    min="1"
+                    autoFocus
+                  />
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="h-7 w-7 text-emerald-600"
+                    onClick={handleLoadFactorChange}
+                    disabled={setLoadFactor.isPending}
+                    title="确认"
+                  >
+                    ✓
+                  </Button>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="h-7 w-7 text-muted-foreground"
+                    onClick={() => {
+                      setEditingLoadFactor(false);
+                      setLoadFactorValue(String(credential.loadFactor ?? 1));
+                    }}
+                    title="取消"
+                  >
+                    ✕
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <button
+                type="button"
+                className="inline-flex items-center gap-1 rounded-md px-2 py-0.5 font-mono text-xs font-semibold tabular-nums transition-colors hover:bg-accent hover:text-primary"
+                onClick={() => setEditingLoadFactor(true)}
+                title="负载因子：均衡模式下平滑加权轮询权重，点击编辑"
+              >
+                {credential.loadFactor ?? 1}x
+                <Pencil className="h-3 w-3 opacity-60" />
+              </button>
+            )}
+          </div>
+        </div>
+
         <div className="w-20 text-center">
           <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/80">
             失败
@@ -1213,7 +1301,7 @@ function CredentialCardImpl({
               {/* Priority */}
               <div className="flex flex-col items-center justify-center px-1">
                 <span className="text-[10px] font-semibold text-muted-foreground/80 uppercase tracking-wider">
-                  优先级
+                  优先级/权重
                 </span>
                 {editingPriority ? (
                   <div className="mt-1 flex items-center justify-center gap-0.5">
@@ -1252,7 +1340,8 @@ function CredentialCardImpl({
                     {credential.isCurrent && (
                       <Flag className="h-3 w-3 fill-emerald-500 text-emerald-500 shrink-0" />
                     )}
-                    #{credential.priority}
+                    <span>#{credential.priority}</span>
+                    <span className="text-[10px] opacity-70">({credential.loadFactor ?? 1}x)</span>
                     <Pencil className="h-2.5 w-2.5 opacity-60" />
                   </button>
                 )}

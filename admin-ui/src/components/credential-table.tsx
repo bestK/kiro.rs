@@ -54,6 +54,7 @@ import { maskProxyUrl, extractErrorMessage, formatBalance, cn } from "@/lib/util
 import {
   useSetDisabled,
   useSetPriority,
+  useSetLoadFactor,
   useResetFailure,
   useDeleteCredential,
   useForceRefreshToken,
@@ -252,21 +253,21 @@ export function CredentialTable({
               </div>
             </TableSortHeader>
 
-            {/* 调度优先级 */}
+            {/* 调度优先级与负载因子 */}
             <TableSortHeader
               field="priority"
               activeFields={["priority"]}
               currentField={sortField}
               sortDir={sortDir}
               onSort={onSort}
-              className="min-w-[85px]"
+              className="min-w-[95px]"
               title={
                 invertPriority
-                  ? "点击按调度优先级排序（数值大优先）"
-                  : "点击按调度优先级排序（数值小优先）"
+                  ? "优先级（大优先）/ 负载因子（SWRR 权重）"
+                  : "优先级（小优先）/ 负载因子（SWRR 权重）"
               }
             >
-              优先级
+              优先级 / 权重
             </TableSortHeader>
 
             {/* 成功 / 失败 */}
@@ -372,6 +373,7 @@ function CredentialTableRowComponent({
 }: CredentialTableRowProps) {
   const setDisabled = useSetDisabled();
   const setPriority = useSetPriority();
+  const setLoadFactor = useSetLoadFactor();
   const resetFailure = useResetFailure();
   const deleteCredential = useDeleteCredential();
   const forceRefresh = useForceRefreshToken();
@@ -380,6 +382,8 @@ function CredentialTableRowComponent({
 
   const [editingPriority, setEditingPriority] = useState(false);
   const [priorityValue, setPriorityValue] = useState(String(credential.priority));
+  const [editingLoadFactor, setEditingLoadFactor] = useState(false);
+  const [loadFactorValue, setLoadFactorValue] = useState(String(credential.loadFactor ?? 1));
   const { data: lbData } = useLoadBalancingMode();
   const invertPriority = lbData?.invertPriority ?? false;
 
@@ -461,6 +465,24 @@ function CredentialTableRowComponent({
         onSuccess: (res) => {
           toast.success(res.message);
           setEditingPriority(false);
+        },
+        onError: (err) => toast.error("操作失败: " + (err as Error).message),
+      },
+    );
+  };
+
+  const handleLoadFactorChange = () => {
+    const lf = parseInt(loadFactorValue, 10);
+    if (isNaN(lf) || lf < 1) {
+      toast.error("负载因子必须为 1 或更大的整数");
+      return;
+    }
+    setLoadFactor.mutate(
+      { id: credential.id, loadFactor: lf },
+      {
+        onSuccess: (res) => {
+          toast.success(res.message);
+          setEditingLoadFactor(false);
         },
         onError: (err) => toast.error("操作失败: " + (err as Error).message),
       },
@@ -738,51 +760,93 @@ function CredentialTableRowComponent({
           </div>
         </td>
 
-        {/* 优先级 (双行：优先级按钮 + 当前优先指示) */}
-        <td className="px-2.5 py-1.5 min-w-[85px] whitespace-nowrap">
+        {/* 优先级与权重 (双行：优先级/权重按钮 + 当前优先指示) */}
+        <td className="px-2.5 py-1.5 min-w-[95px] whitespace-nowrap">
           <div className="flex flex-col gap-0.5">
-            {editingPriority ? (
-              <div className="flex items-center gap-0.5">
-                <Input
-                  type="number"
-                  value={priorityValue}
-                  onChange={(e) => setPriorityValue(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") handlePriorityChange();
-                    if (e.key === "Escape") {
-                      setEditingPriority(false);
-                      setPriorityValue(String(credential.priority));
-                    }
-                  }}
-                  className="h-5 w-12 text-center text-xs font-mono p-0"
-                  min="0"
-                  autoFocus
-                />
+            <div className="flex items-center gap-1.5">
+              {editingPriority ? (
+                <div className="flex items-center gap-0.5">
+                  <Input
+                    type="number"
+                    value={priorityValue}
+                    onChange={(e) => setPriorityValue(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") handlePriorityChange();
+                      if (e.key === "Escape") {
+                        setEditingPriority(false);
+                        setPriorityValue(String(credential.priority));
+                      }
+                    }}
+                    className="h-5 w-11 text-center text-xs font-mono p-0"
+                    min="0"
+                    autoFocus
+                  />
+                  <button
+                    type="button"
+                    onClick={handlePriorityChange}
+                    className="text-xs text-emerald-600 font-bold px-1"
+                  >
+                    ✓
+                  </button>
+                </div>
+              ) : (
                 <button
                   type="button"
-                  onClick={handlePriorityChange}
-                  className="text-xs text-emerald-600 font-bold px-1"
+                  onClick={() => {
+                    if (!preview) setEditingPriority(true);
+                  }}
+                  className="inline-flex items-center gap-1 font-mono text-xs font-semibold text-foreground hover:text-primary transition-colors text-left"
+                  title={
+                    invertPriority
+                      ? "点击修改优先级（数字越大越先被使用）"
+                      : "点击修改优先级（数字越小越先被使用）"
+                  }
                 >
-                  ✓
+                  #{credential.priority}
+                  <Pencil className="h-2.5 w-2.5 opacity-40 hover:opacity-100" />
                 </button>
-              </div>
-            ) : (
-              <button
-                type="button"
-                onClick={() => {
-                  if (!preview) setEditingPriority(true);
-                }}
-                className="inline-flex items-center gap-1 font-mono text-xs font-semibold text-foreground hover:text-primary transition-colors text-left"
-                title={
-                  invertPriority
-                    ? "点击修改优先级（数字越大越先被使用）"
-                    : "点击修改优先级（数字越小越先被使用）"
-                }
-              >
-                #{credential.priority}
-                <Pencil className="h-2.5 w-2.5 opacity-40 hover:opacity-100" />
-              </button>
-            )}
+              )}
+
+              {/* 负载因子/权重 */}
+              {editingLoadFactor ? (
+                <div className="flex items-center gap-0.5">
+                  <Input
+                    type="number"
+                    value={loadFactorValue}
+                    onChange={(e) => setLoadFactorValue(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") handleLoadFactorChange();
+                      if (e.key === "Escape") {
+                        setEditingLoadFactor(false);
+                        setLoadFactorValue(String(credential.loadFactor ?? 1));
+                      }
+                    }}
+                    className="h-5 w-10 text-center text-xs font-mono p-0"
+                    min="1"
+                    autoFocus
+                  />
+                  <button
+                    type="button"
+                    onClick={handleLoadFactorChange}
+                    className="text-xs text-emerald-600 font-bold px-0.5"
+                  >
+                    ✓
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!preview) setEditingLoadFactor(true);
+                  }}
+                  className="inline-flex items-center gap-0.5 text-[10px] font-mono px-1 py-0.5 rounded bg-muted/70 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                  title="负载因子：均衡模式下平滑加权轮询权重（越大调度越频），点击编辑"
+                >
+                  <span>{credential.loadFactor ?? 1}x</span>
+                  <Pencil className="h-2 w-2 opacity-30 hover:opacity-100" />
+                </button>
+              )}
+            </div>
 
             <div>
               {credential.isCurrent ? (

@@ -953,6 +953,8 @@ struct CredentialEntry {
     self_heal_model: Option<String>,
     /// 当前在途处理中的请求数（用于负载均衡并发避让）
     in_flight: Arc<AtomicU32>,
+    /// SWRR 平滑加权轮询的当前动态权重
+    current_weight: i64,
 }
 
 impl CredentialEntry {
@@ -967,6 +969,7 @@ impl CredentialEntry {
         self.rpm_window.clear();
         self.in_flight.store(0, Ordering::Relaxed);
         self.clear_self_heal_streak();
+        self.current_weight = 0;
     }
 }
 
@@ -1072,6 +1075,8 @@ pub struct CredentialEntrySnapshot {
     pub id: u64,
     /// 优先级
     pub priority: u32,
+    /// 负载因子（权重，数值越大调度频次越高，默认为 1）
+    pub load_factor: u32,
     /// 是否被禁用
     pub disabled: bool,
     /// 连续失败次数
@@ -1470,6 +1475,7 @@ impl MultiTokenManager {
                     last_self_heal_at,
                     self_heal_model: cred.self_heal_model.clone(),
                     in_flight: Arc::new(AtomicU32::new(0)),
+                    current_weight: 0,
                 }
             })
             .collect();
@@ -2139,68 +2145,129 @@ impl MultiTokenManager {
     /// 根据负载均衡模式选择下一个凭据
     ///
     /// - priority 模式：选择优先级最高（tier 最小、数字 priority 最小）的可用凭据
-    /// - balanced 模式：按 Tier 分层均衡选择可用凭据（Tier 优先，Tier 内 Least-Used 均摊）
+    /// - balanced 模式：按 Tier 分层平滑加权轮询（SWRR）选择可用凭据（Tier 优先，Tier 内结合 in_flight 与负载因子 load_factor 平滑轮询）
     ///
     /// # 参数
     /// - `model`: 可选的模型名称，用于过滤支持该模型的凭据（如 opus 模型需要付费订阅）
-    fn select_next_credential(
+    #[cfg(test)]
+    pub fn select_next_credential(
         &self,
         model: Option<&str>,
         group: Option<&str>,
     ) -> Option<(u64, KiroCredentials)> {
-        let entries = self.entries.lock();
+        self.select_next_credential_impl(model, group, true)
+    }
+
+    fn select_next_credential_impl(
+        &self,
+        model: Option<&str>,
+        group: Option<&str>,
+        update_state: bool,
+    ) -> Option<(u64, KiroCredentials)> {
+        let mut entries = self.entries.lock();
         let now = Instant::now();
         let group_tiers = self.resolve_group_tiers(group);
-
-        // 过滤可用凭据，附带生效 tier
-        let available: Vec<_> = entries
-            .iter()
-            .filter_map(|e| {
-                if !self.entry_available_for_request_with_tiers(e, model, group_tiers.as_ref(), now) {
-                    return None;
-                }
-                let tier = credential_tier_rank(&e.credentials.groups, group_tiers.as_ref()).unwrap_or(0);
-                let model_support = self.cached_model_support(e.id, model);
-                Some((e, tier, model_support))
-            })
-            .collect();
-
-        if available.is_empty() {
-            return None;
-        }
 
         let (mode, invert) = self.resolve_load_balancing_for_group(group);
         let mode = mode.as_str();
         match mode {
             "balanced" => {
-                // Tiered Least-Used 策略：
+                // Tiered SWRR（平滑加权轮询）策略：
                 // 1. Tier 越小（被引用的优先组，如临期账号）绝对优先于宿主原生账号
-                // 2. 同 Tier 内优先选择在途并发最少、累计成功次数最少的凭据
-                // 3. 平局时优先选择已确认支持该模型的凭据与高优先级凭据
-                let (entry, _, support) = available.iter().min_by_key(|(e, tier, support)| {
-                    let in_flight = e.in_flight.load(Ordering::Relaxed);
-                    let discovery_rank = usize::from(*support != CachedModelSupport::Confirmed);
-                    (
-                        *tier,
-                        in_flight,
-                        e.success_count,
-                        discovery_rank,
-                        priority_key(e.credentials.priority, invert),
-                        e.id,
-                    )
-                })?;
-
-                if *support == CachedModelSupport::Unknown && model.is_some() {
-                    self.spawn_model_cache_refresh(entry.id);
+                // 2. 同 Tier 内优先选择在途并发最少的凭据（并发避让）
+                // 3. 在最优候选集中按凭据负载因子 (load_factor) 执行平滑加权轮询调度
+                // 4. 平局时优先选择已确认支持该模型的凭据与高优先级凭据
+                let mut candidates: Vec<(usize, u32, CachedModelSupport)> = Vec::new();
+                for (idx, e) in entries.iter().enumerate() {
+                    if self.entry_available_for_request_with_tiers(e, model, group_tiers.as_ref(), now) {
+                        let tier = credential_tier_rank(&e.credentials.groups, group_tiers.as_ref()).unwrap_or(0);
+                        let model_support = self.cached_model_support(e.id, model);
+                        candidates.push((idx, tier, model_support));
+                    }
                 }
 
-                Some((entry.id, entry.credentials.clone()))
+                if candidates.is_empty() {
+                    return None;
+                }
+
+                // 1. 过滤到最小 tier
+                let min_tier = candidates.iter().map(|(_, tier, _)| *tier).min().unwrap();
+                candidates.retain(|(_, tier, _)| *tier == min_tier);
+
+                // 2. 过滤到最小 in_flight（并发避让优先）
+                let min_in_flight = candidates
+                    .iter()
+                    .map(|(idx, _, _)| entries[*idx].in_flight.load(Ordering::Relaxed))
+                    .min()
+                    .unwrap();
+                candidates.retain(|(idx, _, _)| {
+                    entries[*idx].in_flight.load(Ordering::Relaxed) == min_in_flight
+                });
+
+                // 3. 计算所有可用候选的总权重
+                let total_weight: i64 = candidates
+                    .iter()
+                    .map(|(idx, _, _)| entries[*idx].credentials.effective_load_factor() as i64)
+                    .sum();
+
+                // 4. SWRR 步进：每个候选的 current_weight += effective_load_factor
+                if update_state {
+                    for (idx, _, _) in &candidates {
+                        let weight = entries[*idx].credentials.effective_load_factor() as i64;
+                        entries[*idx].current_weight += weight;
+                    }
+                }
+
+                // 5. 选出 current_weight 最大的候选凭据
+                let best_candidate = candidates.iter().max_by_key(|(idx, _, support)| {
+                    let e = &entries[*idx];
+                    let weight = e.credentials.effective_load_factor() as i64;
+                    let current_weight = if update_state {
+                        e.current_weight
+                    } else {
+                        e.current_weight + weight
+                    };
+                    let discovery_rank = usize::from(*support != CachedModelSupport::Confirmed);
+                    (
+                        current_weight,
+                        std::cmp::Reverse(discovery_rank),
+                        std::cmp::Reverse(priority_key(e.credentials.priority, invert)),
+                        std::cmp::Reverse(e.id),
+                    )
+                });
+
+                if let Some(&(best_idx, _, support)) = best_candidate {
+                    if update_state {
+                        entries[best_idx].current_weight -= total_weight;
+                    }
+                    let best_id = entries[best_idx].id;
+                    let best_creds = entries[best_idx].credentials.clone();
+
+                    if support == CachedModelSupport::Unknown && model.is_some() {
+                        self.spawn_model_cache_refresh(best_id);
+                    }
+
+                    Some((best_id, best_creds))
+                } else {
+                    None
+                }
             }
             _ => {
                 // priority 模式（默认）：严格按 (tier, priority_key, id) 升序固定顺序选择。
-                let (entry, _, _) = available
+                let mut available: Vec<_> = entries
                     .iter()
-                    .min_by_key(|(e, tier, _)| (*tier, priority_key(e.credentials.priority, invert), e.id))?;
+                    .filter_map(|e| {
+                        if !self.entry_available_for_request_with_tiers(e, model, group_tiers.as_ref(), now) {
+                            return None;
+                        }
+                        let tier = credential_tier_rank(&e.credentials.groups, group_tiers.as_ref()).unwrap_or(0);
+                        Some((e, tier))
+                    })
+                    .collect();
+
+                let (entry, _) = available
+                    .drain(..)
+                    .min_by_key(|(e, tier)| (*tier, priority_key(e.credentials.priority, invert), e.id))?;
                 Some((entry.id, entry.credentials.clone()))
             }
         }
@@ -2333,12 +2400,13 @@ impl MultiTokenManager {
                 // 粘性未命中时两种模式都按当前请求重新选择。priority 模式不能复用 current_id，
                 // 否则高优先级凭据从 RPM/冷却恢复后无法在下一次请求立即回切。
                 let (sticky_pick, route) = self.sticky_candidate(session, model, group);
-                let mut best = sticky_pick.or_else(|| self.select_next_credential(model, group));
+                let mut best = sticky_pick
+                    .or_else(|| self.select_next_credential_impl(model, group, update_current));
 
                 // 没有可用凭据：如果是"自动禁用导致全灭"，做一次受控自愈
                 // （受冷却间隔与连续轮数上限约束，避免持续 403 死循环）。
                 if best.is_none() && self.try_self_heal(model, group) {
-                    best = self.select_next_credential(model, group);
+                    best = self.select_next_credential_impl(model, group, update_current);
                 }
 
                 let (id, credentials) = if let Some((new_id, new_creds)) = best {
@@ -3448,6 +3516,7 @@ impl MultiTokenManager {
                     CredentialEntrySnapshot {
                         id: e.id,
                         priority: e.credentials.priority,
+                        load_factor: e.credentials.effective_load_factor(),
                         disabled: e.disabled,
                         failure_count: e.failure_count,
                         total_failure_count: e.total_failure_count,
@@ -3645,6 +3714,22 @@ impl MultiTokenManager {
         Ok(())
     }
 
+    /// 设置凭据负载因子（权重，数值越大调度频次越高，>= 1，Admin API）
+    pub fn set_load_factor(&self, id: u64, load_factor: u32) -> anyhow::Result<()> {
+        let val = load_factor.max(1);
+        {
+            let mut entries = self.entries.lock();
+            let entry = entries
+                .iter_mut()
+                .find(|e| e.id == id)
+                .ok_or_else(|| anyhow::anyhow!("凭据不存在: {}", id))?;
+            entry.credentials.load_factor = val;
+            entry.current_weight = 0;
+        }
+        self.persist_credentials()?;
+        Ok(())
+    }
+
     /// 重置凭据失败计数并重新启用（Admin API）
     pub fn reset_and_enable(&self, id: u64) -> anyhow::Result<()> {
         {
@@ -3674,11 +3759,13 @@ impl MultiTokenManager {
                         .find(|e| e.id == target_id)
                         .ok_or_else(|| anyhow::anyhow!("凭据不存在: {}", target_id))?;
                     entry.success_count = 0;
+                    entry.current_weight = 0;
                     count = 1;
                 }
                 None => {
                     for entry in entries.iter_mut() {
                         entry.success_count = 0;
+                        entry.current_weight = 0;
                         count += 1;
                     }
                 }
@@ -4286,6 +4373,7 @@ impl MultiTokenManager {
                 last_self_heal_at: None,
                 self_heal_model: None,
                 in_flight: Arc::new(AtomicU32::new(0)),
+                current_weight: 0,
             });
         }
 
@@ -4319,6 +4407,7 @@ impl MultiTokenManager {
         groups: Option<Vec<String>>,
         source_channel: Option<Option<String>>,
         metadata: Option<crate::kiro::model::credentials::CredentialMetadata>,
+        load_factor: Option<u32>,
     ) -> anyhow::Result<()> {
         let invalidate_models =
             proxy_url.is_some() || proxy_username.is_some() || proxy_password.is_some();
@@ -4354,6 +4443,10 @@ impl MultiTokenManager {
             }
             if let Some(v) = metadata {
                 entry.credentials.metadata = v;
+            }
+            if let Some(lf) = load_factor {
+                entry.credentials.load_factor = lf.max(1);
+                entry.current_weight = 0;
             }
         }
         if invalidate_models {
@@ -6761,7 +6854,9 @@ mod tests {
             MultiTokenManager::new(config, vec![first, second], None, None, false).unwrap();
 
         assert_eq!(manager.snapshot().current_id, 1);
-        manager.report_success(1);
+        let first_context = manager.acquire_context(None, None).await.unwrap();
+        assert_eq!(first_context.id, 1);
+        assert_eq!(manager.snapshot().current_id, 1);
 
         let (context, is_balanced, _) = manager
             .acquire_context_impl(None, None, None, false)
@@ -6797,7 +6892,7 @@ mod tests {
         let manager =
             MultiTokenManager::new(config, vec![first, second], None, None, false).unwrap();
 
-        manager.report_success(1);
+        let _ = manager.acquire_context(None, None).await.unwrap();
         let context = manager.acquire_context(None, None).await.unwrap();
         assert_eq!(context.id, 2);
         assert_eq!(manager.snapshot().current_id, 2);
@@ -7678,6 +7773,7 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
             )
             .unwrap();
 
@@ -7707,7 +7803,7 @@ mod tests {
         };
 
         manager
-            .update_credential(1, None, None, None, None, None, None, Some(metadata))
+            .update_credential(1, None, None, None, None, None, None, Some(metadata), None)
             .unwrap();
 
         let snapshot = manager.snapshot();
@@ -8364,15 +8460,13 @@ mod tests {
         )
         .unwrap();
 
-        // 让 A(id1) 成功若干次 → balanced 应转向 success_count 更小的 B(id2)
-        manager.report_success(1);
-        manager.report_success(1);
-        let pick = manager.select_next_credential(None, Some("g1"));
-        assert_eq!(
-            pick.map(|(id, _)| id),
-            Some(2),
-            "balanced 应在 g1 内选 success_count 最小的 B"
-        );
+        // g1 内 A(id1) 与 B(id2) 负载因子均为 1，平滑轮询交替调度
+        let pick1 = manager.select_next_credential(None, Some("g1"));
+        assert_eq!(pick1.map(|(id, _)| id), Some(1), "balanced SWRR 首轮调度 A");
+        let pick2 = manager.select_next_credential(None, Some("g1"));
+        assert_eq!(pick2.map(|(id, _)| id), Some(2), "balanced SWRR 第二轮调度 B");
+        let pick3 = manager.select_next_credential(None, Some("g1"));
+        assert_eq!(pick3.map(|(id, _)| id), Some(1), "balanced SWRR 第三轮平滑回切 A");
         // g2 不受 g1 计数影响，仍只会选到 C(id3)
         let pick_g2 = manager.select_next_credential(None, Some("g2"));
         assert_eq!(pick_g2.map(|(id, _)| id), Some(3));
@@ -8491,15 +8585,12 @@ mod tests {
         )
         .unwrap();
 
-        // 模拟凭据 #1 已确认支持模型，但已有 5 次成功调用
+        // 模拟凭据 #1 已确认支持模型且首轮被优先调度
         seed_model_cache(&manager, 1, &["claude-3-7-sonnet"]);
-        for _ in 0..5 {
-            manager.report_success(1);
-        }
+        let first_pick = manager.select_next_credential(Some("claude-3-7-sonnet"), None);
+        assert_eq!(first_pick.map(|(id, _)| id), Some(1));
 
-        // 凭据 #2 未预热（Unknown），但成功调用为 0
-        // 旧策略：discovery_rank 优先，导致 #2 永远无法被选中（饥饿）
-        // 新策略：优先按在途与 success_count 负载均衡，#2 应被优先调度
+        // SWRR 平滑轮询应及时调度未预热（Unknown）的凭据 #2，避免其被饿死
         let pick = manager.select_next_credential(Some("claude-3-7-sonnet"), None);
         assert_eq!(
             pick.map(|(id, _)| id),
@@ -8741,5 +8832,122 @@ mod tests {
         assert_eq!(e2.disabled_reason, Some(DisabledReason::Suspended));
         assert!(e3.disabled);
         assert_eq!(e3.disabled_reason, Some(DisabledReason::Suspended));
+    }
+
+    #[test]
+    fn test_swrr_load_factor_distribution_and_ratio() {
+        let mut config = Config::default();
+        config.load_balancing_mode = "balanced".to_string();
+
+        let mut cred1 = grouped_cred("token-1", &[]);
+        cred1.id = Some(1);
+        cred1.load_factor = 3; // 负载因子 3
+
+        let mut cred2 = grouped_cred("token-2", &[]);
+        cred2.id = Some(2);
+        cred2.load_factor = 1; // 负载因子 1
+
+        let manager = MultiTokenManager::new(
+            config,
+            vec![cred1, cred2],
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+
+        // 连续调度 40 次，比例应严格为 3:1 (即 30:10)
+        let mut count1 = 0;
+        let mut count2 = 0;
+        for _ in 0..40 {
+            let pick = manager.select_next_credential(None, None).unwrap();
+            if pick.0 == 1 {
+                count1 += 1;
+            } else if pick.0 == 2 {
+                count2 += 1;
+            }
+        }
+
+        assert_eq!(count1, 30, "负载因子为 3 的账号应获得 3/4 流量");
+        assert_eq!(count2, 10, "负载因子为 1 的账号应获得 1/4 流量");
+    }
+
+    #[test]
+    fn test_swrr_smooth_interleaving_and_no_catchup_starvation() {
+        let mut config = Config::default();
+        config.load_balancing_mode = "balanced".to_string();
+
+        // 模拟用户场景：老号 #1 历史调用量很大 (800)，新增两个新号 #2, #3
+        let mut old_cred = grouped_cred("token-old", &[]);
+        old_cred.id = Some(1);
+        old_cred.load_factor = 2; // 老号权重 2
+
+        let mut new_cred1 = grouped_cred("token-new1", &[]);
+        new_cred1.id = Some(2);
+        new_cred1.load_factor = 1; // 新号1 权重 1
+
+        let mut new_cred2 = grouped_cred("token-new2", &[]);
+        new_cred2.id = Some(3);
+        new_cred2.load_factor = 1; // 新号2 权重 1
+
+        let manager = MultiTokenManager::new(
+            config,
+            vec![old_cred, new_cred1, new_cred2],
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+
+        // 模拟老号有很大的历史 success_count
+        for _ in 0..800 {
+            manager.report_success(1);
+        }
+
+        // SWRR 策略下，老号与新号应立即按 2:1:1 平滑混合调度，新号不会因为历史为 0 被单独狂刷追平
+        // 一个周期 4 次请求的典型平滑序列: 1, 2, 3, 1
+        let picks: Vec<u64> = (0..4)
+            .map(|_| manager.select_next_credential(None, None).unwrap().0)
+            .collect();
+        assert_eq!(picks, vec![1, 2, 3, 1], "老号与新号应立即平滑按权重交替调度");
+    }
+
+    #[test]
+    fn test_set_load_factor_updates_behavior() {
+        let mut config = Config::default();
+        config.load_balancing_mode = "balanced".to_string();
+
+        let mut cred1 = grouped_cred("token-1", &[]);
+        cred1.id = Some(1);
+        cred1.load_factor = 1;
+
+        let mut cred2 = grouped_cred("token-2", &[]);
+        cred2.id = Some(2);
+        cred2.load_factor = 1;
+
+        let manager = MultiTokenManager::new(
+            config,
+            vec![cred1, cred2],
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+
+        // 修改 #2 的负载因子为 3
+        manager.set_load_factor(2, 3).unwrap();
+
+        let mut count1 = 0;
+        let mut count2 = 0;
+        for _ in 0..40 {
+            let pick = manager.select_next_credential(None, None).unwrap();
+            if pick.0 == 1 {
+                count1 += 1;
+            } else if pick.0 == 2 {
+                count2 += 1;
+            }
+        }
+        assert_eq!(count1, 10);
+        assert_eq!(count2, 30);
     }
 }

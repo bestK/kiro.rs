@@ -1726,6 +1726,7 @@ impl AdminService {
                 CredentialStatusItem {
                     id: entry.id,
                     priority: entry.priority,
+                    load_factor: entry.load_factor,
                     disabled: entry.disabled,
                     failure_count: entry.failure_count,
                     total_failure_count: entry.total_failure_count,
@@ -2260,6 +2261,13 @@ impl AdminService {
             .map_err(|e| self.classify_error(e, id))
     }
 
+    /// 设置凭据负载因子
+    pub fn set_load_factor(&self, id: u64, load_factor: u32) -> Result<(), AdminServiceError> {
+        self.token_manager
+            .set_load_factor(id, load_factor)
+            .map_err(|e| self.classify_error(e, id))
+    }
+
     /// 重置失败计数并重新启用
     pub fn reset_and_enable(&self, id: u64) -> Result<(), AdminServiceError> {
         self.token_manager
@@ -2753,6 +2761,7 @@ impl AdminService {
             issuer_url: req.issuer_url,
             scopes: req.scopes,
             priority: req.priority,
+            load_factor: req.load_factor.max(1),
             region: req.region,
             auth_region: req.auth_region,
             api_region: req.api_region,
@@ -2904,6 +2913,7 @@ impl AdminService {
                 req.source_channel
                     .map(|v| if v.is_empty() { None } else { Some(v) }),
                 req.metadata,
+                req.load_factor,
             )
             .map_err(|e| self.classify_error(e, id))
     }
@@ -4491,6 +4501,7 @@ impl AdminService {
                 None,            // groups 不修改
                 None,            // source_channel 不修改
                 None,            // metadata 不修改
+                None,            // load_factor 不修改
             )
             .map_err(|e| {
                 let msg = e.to_string();
@@ -4560,7 +4571,7 @@ impl AdminService {
             let url = urls[i % urls.len()].clone();
             if self
                 .token_manager
-                .update_credential(*cred_id, None, Some(Some(url)), None, None, None, None, None)
+                .update_credential(*cred_id, None, Some(Some(url)), None, None, None, None, None, None)
                 .is_ok()
             {
                 assigned += 1;

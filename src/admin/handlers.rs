@@ -29,6 +29,7 @@ use super::{
         SetCacheMeteringConfigRequest, SetSessionAffinityConfigRequest,
         SetTokenByCreditConfigRequest,
         SetLoadBalancingModeRequest, SetLogGovernanceConfigRequest, SetPriorityRequest,
+        SetLoadFactorRequest,
         SetSelfHealConfigRequest,
         SetUpdateConfigRequest, StartIdcLoginRequest, StartSocialLoginRequest, SuccessResponse,
         UpdateAdminKeyRequest, UpdateClientKeyRequest, UpdateCredentialRequest,
@@ -131,6 +132,24 @@ pub async fn set_credential_priority(
         Ok(_) => Json(SuccessResponse::new(format!(
             "凭据 #{} 优先级已设置为 {}",
             id, payload.priority
+        )))
+        .into_response(),
+        Err(e) => e.into_http_response(),
+    }
+}
+
+/// POST /api/admin/credentials/:id/load-factor
+/// 设置凭据负载因子
+pub async fn set_credential_load_factor(
+    State(state): State<AdminState>,
+    Path(id): Path<u64>,
+    Json(payload): Json<SetLoadFactorRequest>,
+) -> impl IntoResponse {
+    match state.service.set_load_factor(id, payload.load_factor) {
+        Ok(_) => Json(SuccessResponse::new(format!(
+            "凭据 #{} 负载因子已设置为 {}",
+            id,
+            payload.load_factor.max(1)
         )))
         .into_response(),
         Err(e) => e.into_http_response(),

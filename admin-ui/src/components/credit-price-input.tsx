@@ -16,6 +16,8 @@ export interface CreditPriceInputProps {
   /** 是否允许清空（用于分组/Key 继承上一级） */
   allowClear?: boolean
   className?: string
+  /** 是否在失焦或回车时才提交变更（避免输入每个字符都触发自动保存） */
+  commitOnBlur?: boolean
 }
 
 function toDisplay(val: string, u: 'k' | 'single'): string {
@@ -35,6 +37,7 @@ export function CreditPriceInput({
   placeholder,
   allowClear = true,
   className,
+  commitOnBlur = false,
 }: CreditPriceInputProps) {
   const [unit, setUnit] = useState<'k' | 'single'>('k')
   const [draft, setDraft] = useState(() => toDisplay(value, 'k'))
@@ -53,8 +56,29 @@ export function CreditPriceInput({
     setDraft(toDisplay(value, newUnit))
   }
 
+  const commitDraft = (raw: string) => {
+    if (raw.trim() === '') {
+      if (allowClear) {
+        if (value !== '') onChange('')
+      } else {
+        setDraft(toDisplay(value, unit))
+      }
+      return
+    }
+    const num = Number(raw)
+    if (!Number.isFinite(num) || num < 0) {
+      setDraft(toDisplay(value, unit))
+      return
+    }
+    const perOne = unit === 'k' ? +(num / 1000).toFixed(6) : num
+    if (String(perOne) !== value) {
+      onChange(String(perOne))
+    }
+  }
+
   const handleInputChange = (raw: string) => {
     setDraft(raw)
+    if (commitOnBlur) return
     if (raw.trim() === '') {
       onChange('')
       return
@@ -167,6 +191,20 @@ export function CreditPriceInput({
           min="0"
           value={draft}
           onChange={(e) => handleInputChange(e.target.value)}
+          onBlur={() => {
+            if (commitOnBlur) {
+              commitDraft(draft)
+            }
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              if (commitOnBlur) commitDraft(draft)
+              e.currentTarget.blur()
+            } else if (e.key === 'Escape') {
+              setDraft(toDisplay(value, unit))
+              e.currentTarget.blur()
+            }
+          }}
           placeholder={
             placeholder ??
             (unit === 'k' ? '例如 80 (留空继承全局)' : '例如 0.08 (留空继承全局)')

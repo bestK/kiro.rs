@@ -52,7 +52,8 @@ import { ProfitCalculator } from '@/components/settings/profit-calculator'
 import { BillingRatioSimulator } from '@/components/settings/billing-ratio-simulator'
 import { DownstreamNewApiConfigCard } from '@/components/settings/downstream-newapi-config'
 import { FloatingSectionNav, type NavSectionItem } from '@/components/console/floating-section-nav'
-import { DownstreamRatioBalancer } from '@/components/downstream-ratio-balancer'
+import { Switch } from '@/components/ui/switch'
+import { CreditPriceInput } from '@/components/credit-price-input'
 
 const BILLING_NAV_ITEMS: NavSectionItem[] = [
   { id: 'section-billing-global', title: '全局折算设置' },
@@ -62,221 +63,6 @@ const BILLING_NAV_ITEMS: NavSectionItem[] = [
   { id: 'section-billing-profit', title: '利润测算与用量盈亏分析' },
   { id: 'section-billing-ratio', title: '下游计费口径与官方倍率模拟' },
 ]
-
-/**
- * 专属基准价格设置行：支持按「每千分单价 (USD / 千分)」与「单积分价格 (USD / 积分)」两种视角无缝切换与修改。
- */
-function BillingCreditPriceRow({
-  creditPrice,
-  onCommit,
-  pending,
-  saved,
-  disabled,
-}: {
-  creditPrice: number
-  onCommit: (next: number) => void
-  pending?: boolean
-  saved?: boolean
-  disabled?: boolean
-}) {
-  const [unit, setUnit] = useState<'k' | 'single'>('k')
-
-  const [showBalancer, setShowBalancer] = useState(false)
-
-  const toDisplay = (val: number, u: 'k' | 'single') => {
-    return u === 'k' ? +(val * 1000).toFixed(4) : val
-  }
-
-  const [draft, setDraft] = useState(() => String(toDisplay(creditPrice, 'k')))
-  const [invalid, setInvalid] = useState(false)
-
-  useEffect(() => {
-    setDraft(String(toDisplay(creditPrice, unit)))
-    setInvalid(false)
-  }, [creditPrice, unit])
-
-  const commit = (valStr: string) => {
-    const n = Number(valStr)
-    const min = unit === 'k' ? 0.0001 : 0.000001
-    const max = unit === 'k' ? 100000 : 100
-    if (!Number.isFinite(n) || n < min || n > max) {
-      setInvalid(true)
-      setDraft(String(toDisplay(creditPrice, unit)))
-      window.setTimeout(() => setInvalid(false), 1200)
-      return
-    }
-    const perOne = unit === 'k' ? +(n / 1000).toFixed(6) : n
-    if (perOne === creditPrice) return
-    onCommit(perOne)
-  }
-
-  const handlePreset = (p: number) => {
-    setDraft(String(p))
-    const perOne = unit === 'k' ? +(p / 1000).toFixed(6) : p
-    if (perOne !== creditPrice) {
-      onCommit(perOne)
-    }
-  }
-
-  const kPresets = [70, 75, 80, 90, 100, 120, 150]
-  const singlePresets = [0.07, 0.075, 0.08, 0.09, 0.1, 0.12, 0.15]
-  const presets = unit === 'k' ? kPresets : singlePresets
-  const currentDisplayNum = toDisplay(creditPrice, unit)
-
-  return (
-    <SettingRow
-      label={unit === 'k' ? '基准千分单价' : '基准单积分单价'}
-      hint={
-        <div className="space-y-1">
-          <div>
-            {unit === 'k' ? (
-              <>
-                下游常用的千分计费标准。当前折合{' '}
-                <strong className="text-foreground font-mono">
-                  ${creditPrice} / 积分
-                </strong>
-                。例如常用单价 $80 / 千分（即 1 积分 = $0.08）。
-              </>
-            ) : (
-              <>
-                下游系统中 1 积分对应的金额价值。当前折合{' '}
-                <strong className="text-foreground font-mono">
-                  ${+(creditPrice * 1000).toFixed(4)} / 千分
-                </strong>
-                。例如常用单价 $0.08 / 积分。
-              </>
-            )}
-          </div>
-          <div>
-            <button
-              type="button"
-              disabled={disabled || pending}
-              onClick={() => setShowBalancer((prev) => !prev)}
-              className="inline-flex items-center gap-1.5 text-xs text-primary hover:underline transition-colors font-medium mt-0.5"
-            >
-              <Calculator className="h-3.5 w-3.5" />
-              <span>下游倍率配平助手</span>
-              <span className="text-[10px] text-muted-foreground font-normal">
-                (输入期望实收与倍率自动反推)
-              </span>
-              <ChevronDown
-                className={cn(
-                  'h-3 w-3 transition-transform duration-200 text-muted-foreground',
-                  showBalancer && 'rotate-180 text-primary'
-                )}
-              />
-            </button>
-          </div>
-        </div>
-      }
-      pending={pending}
-      saved={saved}
-    >
-      <div className="flex flex-col items-end gap-2 w-full sm:w-auto">
-        <div className="flex flex-wrap items-center gap-2 justify-end">
-          {/* 单位切换 */}
-          <div className="inline-flex h-7 items-center rounded-md border border-border bg-secondary/50 p-0.5">
-            <button
-              type="button"
-              disabled={disabled || pending}
-              onClick={() => {
-                setUnit('k')
-                setDraft(String(toDisplay(creditPrice, 'k')))
-              }}
-              className={cn(
-                'inline-flex h-6 items-center rounded px-2 text-xs font-medium transition-colors',
-                unit === 'k'
-                  ? 'bg-card text-foreground shadow-xs border border-border/80'
-                  : 'text-muted-foreground hover:text-foreground border border-transparent'
-              )}
-            >
-              $/千分 (推荐)
-            </button>
-            <button
-              type="button"
-              disabled={disabled || pending}
-              onClick={() => {
-                setUnit('single')
-                setDraft(String(toDisplay(creditPrice, 'single')))
-              }}
-              className={cn(
-                'inline-flex h-6 items-center rounded px-2 text-xs font-medium transition-colors',
-                unit === 'single'
-                  ? 'bg-card text-foreground shadow-xs border border-border/80'
-                  : 'text-muted-foreground hover:text-foreground border border-transparent'
-              )}
-            >
-              $/积分
-            </button>
-          </div>
-
-          {/* 快捷预设 */}
-          <div className="flex items-center gap-1">
-            {presets.map((p) => (
-              <Button
-                key={p}
-                type="button"
-                size="sm"
-                variant={currentDisplayNum === p ? 'default' : 'outline'}
-                className="h-7 px-2 text-xs font-mono"
-                disabled={disabled || pending}
-                onClick={() => handlePreset(p)}
-              >
-                ${p}
-              </Button>
-            ))}
-          </div>
-
-          {/* 数值输入 */}
-          <div className="flex items-center gap-1.5">
-            <Input
-              type="number"
-              step="any"
-              min={unit === 'k' ? 0.0001 : 0.000001}
-              max={unit === 'k' ? 100000 : 100}
-              value={draft}
-              disabled={disabled || pending}
-              onChange={(e) => setDraft(e.target.value)}
-              onBlur={() => commit(draft)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.currentTarget.blur()
-                } else if (e.key === 'Escape') {
-                  setDraft(String(toDisplay(creditPrice, unit)))
-                  e.currentTarget.blur()
-                }
-              }}
-              className={cn(
-                'console-num h-8 w-24 text-right text-[13px]',
-                invalid && 'border-destructive focus-visible:border-destructive'
-              )}
-            />
-            <span className="text-xs text-muted-foreground whitespace-nowrap">
-              {unit === 'k' ? 'USD / 千分' : 'USD / 积分'}
-            </span>
-          </div>
-        </div>
-      </div>
-
-      {showBalancer && (
-        <div className="w-full pt-2">
-          <DownstreamRatioBalancer
-            currentUnit={unit}
-            onApply={(singlePrice, kPrice) => {
-              if (unit === 'k') {
-                setDraft(String(kPrice))
-              } else {
-                setDraft(String(singlePrice))
-              }
-              onCommit(singlePrice)
-              toast.success(`已应用全局基准单价: $${kPrice}/千分 ($${singlePrice}/积分)`)
-            }}
-          />
-        </div>
-      )}
-    </SettingRow>
-  )
-}
 
 /**
  * 官方价格数据源设置行：支持自定义修改 API 地址并一键重置为默认值。
@@ -960,6 +746,25 @@ export function BillingSection() {
   const simulatedCacheRatio = tokenByCredit?.simulatedCacheRatio ?? 0.8
   const fixedCacheEnabled = tokenByCredit?.fixedCacheEnabled ?? false
 
+  const [globalCacheRatioDraft, setGlobalCacheRatioDraft] = useState(() =>
+    String(Math.round(simulatedCacheRatio * 100))
+  )
+
+  useEffect(() => {
+    setGlobalCacheRatioDraft(String(Math.round(simulatedCacheRatio * 100)))
+  }, [simulatedCacheRatio])
+
+  const commitGlobalCacheRatio = (valStr: string) => {
+    const n = Number(valStr)
+    if (!Number.isFinite(n) || n < 1 || n > 99) {
+      setGlobalCacheRatioDraft(String(Math.round(simulatedCacheRatio * 100)))
+      return
+    }
+    if (Math.round(simulatedCacheRatio * 100) !== Math.round(n)) {
+      saver.save('simulatedCacheRatio', { simulatedCacheRatio: n / 100 })
+    }
+  }
+
   // 假设基准单价与单位（默认读取当前表单配置，可自由修改试算）
   const [hypoUnit, setHypoUnit] = useState<'k' | 'single'>('k')
   const [hypoPriceCustom, setHypoPriceCustom] = useState<number | null>(null)
@@ -1069,52 +874,157 @@ export function BillingSection() {
           saved={saver.isSaved('enabled')}
           disabled={isLoading}
         />
-        <BillingCreditPriceRow
-          creditPrice={creditPrice}
-          onCommit={(next) => saver.save('creditPrice', { creditPrice: next })}
-          pending={saver.isSaving('creditPrice')}
-          saved={saver.isSaved('creditPrice')}
-          disabled={isLoading}
-        />
-        <SettingSwitch
-          label="模拟 Prompt 缓存"
-          hint="开启后，折算出的输入 Token 会按比例拆分为常规输入与缓存读取 (cache_read_input_tokens)。下游通常按 0.1x 缓存价格扣费，算法严格保证拆分后下游计费总额绝对恒等（0 误差），且总 Token 自动受官方模型上限（如 200K / 272K 等）保护不超限，下游展示账单更美观自然。"
-          checked={simulatedCacheEnabled}
-          onChange={(next) => saver.save('simulatedCacheEnabled', { simulatedCacheEnabled: next })}
-          pending={saver.isSaving('simulatedCacheEnabled')}
-          saved={saver.isSaved('simulatedCacheEnabled')}
-          disabled={isLoading}
-        />
-        {simulatedCacheEnabled && (
-          <>
-            <SettingSwitch
-              label="固定缓存"
-              hint="开启后，每次调用均返回设定的固定缓存数量（不受上游真实缓存命中率约束）。关闭时以设定的缓存命中率为上限，实际取与真实命中率的较小值（即最高 xx% 缓存）。"
-              checked={fixedCacheEnabled}
-              onChange={(next) => saver.save('fixedCacheEnabled', { fixedCacheEnabled: next })}
-              pending={saver.isSaving('fixedCacheEnabled')}
-              saved={saver.isSaved('fixedCacheEnabled')}
-              disabled={isLoading}
-            />
-            <SettingNumber
-              label={fixedCacheEnabled ? '固定缓存比例' : '模拟缓存命中率上限'}
-              hint={
-                fixedCacheEnabled
-                  ? '开启固定缓存时，折算输入 Token 严格按照设定的固定比例拆分为缓存读取，不受上游真实缓存命中率约束。下游计算总扣费严格与无缓存时恒等。'
-                  : '折算输入 Token 时模拟被缓存命中的最高比例（默认 80%），实际取与真实请求缓存命中率的较小值。下游计算总扣费严格与无缓存时恒等。'
+        {/* 全局基准单价与配平助手 */}
+        <div className="border-b border-border/50 py-3.5 space-y-2">
+          <div className="flex items-center justify-between">
+            <div className="space-y-0.5">
+              <div className="flex items-center gap-1.5 text-[13.5px] font-medium">
+                <span>全局基准单价</span>
+                {saver.isSaving('creditPrice') && (
+                  <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+                )}
+                {!saver.isSaving('creditPrice') && saver.isSaved('creditPrice') && (
+                  <Check className="h-3.5 w-3.5 text-emerald-500" />
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                下游系统中 1 积分对应的金额价值。未单独指定单价的分组或 Key 均以此为基准对齐折算。
+              </p>
+            </div>
+          </div>
+          <CreditPriceInput
+            value={creditPrice ? String(creditPrice) : '0.002'}
+            onChange={(nextStr) => {
+              const n = Number(nextStr)
+              if (Number.isFinite(n) && n > 0 && n !== creditPrice) {
+                saver.save('creditPrice', { creditPrice: n })
               }
-              value={Math.round(simulatedCacheRatio * 100)}
-              min={10}
-              max={95}
-              unit="%"
-              presets={[50, 70, 80, 90]}
-              onCommit={(next) => saver.save('simulatedCacheRatio', { simulatedCacheRatio: next / 100 })}
-              pending={saver.isSaving('simulatedCacheRatio')}
-              saved={saver.isSaved('simulatedCacheRatio')}
-              disabled={isLoading}
-            />
-          </>
-        )}
+            }}
+            allowClear={false}
+            commitOnBlur
+            disabled={isLoading}
+          />
+        </div>
+
+        {/* 模拟 Prompt 缓存策略 */}
+        <div className="border-b border-border/50 py-3.5 space-y-2.5">
+          <div className="space-y-1">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1.5 text-[13.5px] font-medium">
+                <span>模拟 Prompt 缓存策略</span>
+                {(saver.isSaving('simulatedCacheEnabled') ||
+                  saver.isSaving('simulatedCacheRatio') ||
+                  saver.isSaving('fixedCacheEnabled')) && (
+                  <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+                )}
+                {!saver.isSaving('simulatedCacheEnabled') &&
+                  !saver.isSaving('simulatedCacheRatio') &&
+                  !saver.isSaving('fixedCacheEnabled') &&
+                  (saver.isSaved('simulatedCacheEnabled') ||
+                    saver.isSaved('simulatedCacheRatio') ||
+                    saver.isSaved('fixedCacheEnabled')) && (
+                  <Check className="h-3.5 w-3.5 text-emerald-500" />
+                )}
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-2 pt-0.5">
+              <Button
+                type="button"
+                size="sm"
+                variant={simulatedCacheEnabled ? 'default' : 'outline'}
+                className="text-xs"
+                onClick={() => {
+                  if (!simulatedCacheEnabled) {
+                    saver.save('simulatedCacheEnabled', { simulatedCacheEnabled: true })
+                  }
+                }}
+                disabled={isLoading}
+              >
+                开启模拟缓存
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant={!simulatedCacheEnabled ? 'default' : 'outline'}
+                className="text-xs"
+                onClick={() => {
+                  if (simulatedCacheEnabled) {
+                    saver.save('simulatedCacheEnabled', { simulatedCacheEnabled: false })
+                  }
+                }}
+                disabled={isLoading}
+              >
+                禁用缓存模拟
+              </Button>
+            </div>
+            <p className="text-[11px] text-muted-foreground leading-relaxed">
+              {simulatedCacheEnabled
+                ? '开启后，折算出的输入 Token 会按比例拆分为常规输入与缓存读取 (cache_read_input_tokens)。下游通常按 0.1x 缓存价格扣费，算法严格保证拆分后下游计费总额绝对恒等（0 误差），且总 Token 自动受官方模型上限保护。'
+                : '不模拟拆分缓存，所有输入用量均作为普通 input_tokens 返回。'}
+            </p>
+          </div>
+
+          {simulatedCacheEnabled && (
+            <div className="space-y-2.5 pl-0.5">
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-muted-foreground">
+                  {fixedCacheEnabled ? '全局固定缓存比例 (%)' : '全局缓存命中率上限 (%)'}
+                </label>
+                <div className="flex items-center gap-2">
+                  <Input
+                    type="number"
+                    min={1}
+                    max={99}
+                    value={globalCacheRatioDraft}
+                    onChange={(e) => setGlobalCacheRatioDraft(e.target.value)}
+                    onBlur={() => commitGlobalCacheRatio(globalCacheRatioDraft)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') commitGlobalCacheRatio(globalCacheRatioDraft)
+                      else if (e.key === 'Escape') {
+                        setGlobalCacheRatioDraft(String(Math.round(simulatedCacheRatio * 100)))
+                        e.currentTarget.blur()
+                      }
+                    }}
+                    className="w-24 text-xs h-8"
+                    disabled={isLoading}
+                  />
+                  <span className="text-xs text-muted-foreground">%</span>
+                  <div className="flex items-center gap-1">
+                    {[50, 70, 80, 90].map((preset) => (
+                      <Button
+                        key={preset}
+                        type="button"
+                        size="sm"
+                        variant={Math.round(simulatedCacheRatio * 100) === preset ? 'secondary' : 'ghost'}
+                        className="h-7 px-2 text-xs"
+                        onClick={() => {
+                          setGlobalCacheRatioDraft(String(preset))
+                          saver.save('simulatedCacheRatio', { simulatedCacheRatio: preset / 100 })
+                        }}
+                        disabled={isLoading}
+                      >
+                        {preset}%
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center justify-between rounded-lg border p-2 bg-muted/20">
+                <div className="space-y-0.5">
+                  <div className="text-xs font-medium">固定缓存</div>
+                  <div className="text-[11px] text-muted-foreground">
+                    开启后返回固定比例缓存，不受上游真实缓存命中率约束；关闭时以此为上限
+                  </div>
+                </div>
+                <Switch
+                  checked={fixedCacheEnabled}
+                  onCheckedChange={(checked) => saver.save('fixedCacheEnabled', { fixedCacheEnabled: checked })}
+                  disabled={isLoading}
+                />
+              </div>
+            </div>
+          )}
+        </div>
         <SettingNumber
           label="官方单价同步周期"
           hint="从 models.dev 自动拉取 Claude、GPT 等模型最新官方价格的定时刷新频率。"

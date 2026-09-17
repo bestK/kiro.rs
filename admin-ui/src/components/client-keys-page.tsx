@@ -30,6 +30,7 @@ import { ConsoleTable, type ConsoleColumn } from '@/components/console/data-tabl
 import { BulkBar } from '@/components/console/bulk-bar'
 import { PageHeader } from '@/components/console/page-header'
 import { FloatingSectionNav, type NavSectionItem } from '@/components/console/floating-section-nav'
+import { Switch } from '@/components/ui/switch'
 import { CreditPriceInput } from '@/components/credit-price-input'
 
 function formatTokens(n: number): string {
@@ -125,6 +126,9 @@ export function ClientKeysPage() {
   const [createMaxCredits, setCreateMaxCredits] = useState('')
   const [createCreditMode, setCreateCreditMode] = useState<'inherit' | 'enabled' | 'disabled'>('inherit')
   const [createCreditPrice, setCreateCreditPrice] = useState('')
+  const [createCacheMode, setCreateCacheMode] = useState<'inherit' | 'custom' | 'disabled'>('inherit')
+  const [createCacheRatio, setCreateCacheRatio] = useState('80')
+  const [createFixedCache, setCreateFixedCache] = useState(false)
   const [createdKey, setCreatedKey] = useState<CreateClientKeyResponse | null>(null)
   const [showCreatedPlain, setShowCreatedPlain] = useState(true)
 
@@ -136,6 +140,9 @@ export function ClientKeysPage() {
   const [editMaxCredits, setEditMaxCredits] = useState('')
   const [editCreditMode, setEditCreditMode] = useState<'inherit' | 'enabled' | 'disabled'>('inherit')
   const [editCreditPrice, setEditCreditPrice] = useState('')
+  const [editCacheMode, setEditCacheMode] = useState<'inherit' | 'custom' | 'disabled'>('inherit')
+  const [editCacheRatio, setEditCacheRatio] = useState('80')
+  const [editFixedCache, setEditFixedCache] = useState(false)
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -154,6 +161,11 @@ export function ClientKeysPage() {
       toast.error('每积分单价必须是非负数')
       return
     }
+    const cacheRatioNum = Number(createCacheRatio)
+    if (createCreditMode === 'enabled' && createCacheMode === 'custom' && (!Number.isFinite(cacheRatioNum) || cacheRatioNum <= 0 || cacheRatioNum >= 100)) {
+      toast.error('缓存命中率必须在 1% 到 99% 之间')
+      return
+    }
     try {
       const res = await createKey.mutateAsync({
         name,
@@ -163,6 +175,22 @@ export function ClientKeysPage() {
         tokenByCreditEnabled:
           createCreditMode === 'enabled' ? true : createCreditMode === 'disabled' ? false : undefined,
         creditPrice: Number.isFinite(priceNum) ? priceNum : undefined,
+        simulatedCacheEnabled:
+          createCreditMode === 'enabled'
+            ? createCacheMode === 'custom'
+              ? true
+              : createCacheMode === 'disabled'
+              ? false
+              : undefined
+            : undefined,
+        simulatedCacheRatio:
+          createCreditMode === 'enabled' && createCacheMode === 'custom' && Number.isFinite(cacheRatioNum)
+            ? cacheRatioNum / 100
+            : undefined,
+        fixedCacheEnabled:
+          createCreditMode === 'enabled' && createCacheMode === 'custom'
+            ? createFixedCache
+            : undefined,
       })
       setCreatedKey(res)
       setCreateOpen(false)
@@ -172,6 +200,9 @@ export function ClientKeysPage() {
       setCreateMaxCredits('')
       setCreateCreditMode('inherit')
       setCreateCreditPrice('')
+      setCreateCacheMode('inherit')
+      setCreateCacheRatio('80')
+      setCreateFixedCache(false)
       setShowCreatedPlain(true)
     } catch (err) {
       toast.error('创建失败：' + extractErrorMessage(err))
@@ -258,6 +289,17 @@ export function ClientKeysPage() {
       item.tokenByCreditEnabled === true ? 'enabled' : item.tokenByCreditEnabled === false ? 'disabled' : 'inherit'
     )
     setEditCreditPrice(item.creditPrice != null ? String(item.creditPrice) : '')
+    setEditCacheMode(
+      item.simulatedCacheEnabled === false
+        ? 'disabled'
+        : item.simulatedCacheEnabled === true || item.simulatedCacheRatio != null
+        ? 'custom'
+        : 'inherit'
+    )
+    setEditCacheRatio(
+      item.simulatedCacheRatio != null ? String(Math.round(item.simulatedCacheRatio * 100)) : '80'
+    )
+    setEditFixedCache(item.fixedCacheEnabled === true)
     setEditOpen(true)
   }
 
@@ -274,6 +316,11 @@ export function ClientKeysPage() {
       toast.error('每积分单价必须是非负数')
       return
     }
+    const cacheRatioNum = Number(editCacheRatio)
+    if (editCreditMode === 'enabled' && editCacheMode === 'custom' && (!Number.isFinite(cacheRatioNum) || cacheRatioNum <= 0 || cacheRatioNum >= 100)) {
+      toast.error('缓存命中率必须在 1% 到 99% 之间')
+      return
+    }
     try {
       await updateKey.mutateAsync({
         id: editTarget.id,
@@ -286,6 +333,28 @@ export function ClientKeysPage() {
           resetTokenByCredit: editCreditMode === 'inherit' ? true : undefined,
           creditPrice: Number.isFinite(priceNum) ? priceNum : undefined,
           resetCreditPrice: editCreditPrice.trim() === '' ? true : undefined,
+          simulatedCacheEnabled:
+            editCreditMode === 'disabled'
+              ? undefined
+              : editCacheMode === 'custom'
+              ? true
+              : editCacheMode === 'disabled'
+              ? false
+              : undefined,
+          resetSimulatedCache:
+            editCreditMode === 'disabled' || editCacheMode === 'inherit' ? true : undefined,
+          simulatedCacheRatio:
+            editCreditMode !== 'disabled' && editCacheMode === 'custom' && Number.isFinite(cacheRatioNum)
+              ? cacheRatioNum / 100
+              : undefined,
+          resetSimulatedCacheRatio:
+            editCreditMode === 'disabled' || editCacheMode !== 'custom' ? true : undefined,
+          fixedCacheEnabled:
+            editCreditMode !== 'disabled' && editCacheMode === 'custom'
+              ? editFixedCache
+              : undefined,
+          resetFixedCache:
+            editCreditMode === 'disabled' || editCacheMode !== 'custom' ? true : undefined,
         },
       })
       // 仅在上限发生变化时才调用额度接口，避免无谓写入
@@ -916,7 +985,7 @@ const KEYS_NAV_ITEMS: NavSectionItem[] = [
       {/* 新建对话框 */}
       {createOpen && (
         <Dialog open={createOpen} onOpenChange={(o) => !createKey.isPending && setCreateOpen(o)}>
-          <DialogContent className="sm:max-w-md max-h-[88vh] overflow-y-auto">
+          <DialogContent className="sm:max-w-lg max-h-[88vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>新建客户端 Key</DialogTitle>
               <DialogDescription>
@@ -1010,14 +1079,106 @@ const KEYS_NAV_ITEMS: NavSectionItem[] = [
                 </p>
               </div>
               {createCreditMode === 'enabled' && (
-                <div className="space-y-1.5">
-                  <label className="text-[12px] text-muted-foreground">专属计费单价</label>
-                  <CreditPriceInput
-                    value={createCreditPrice}
-                    onChange={setCreateCreditPrice}
-                    disabled={createKey.isPending}
-                  />
-                </div>
+                <>
+                  <div className="space-y-1.5">
+                    <label className="text-[12px] text-muted-foreground">专属计费单价</label>
+                    <CreditPriceInput
+                      value={createCreditPrice}
+                      onChange={setCreateCreditPrice}
+                      disabled={createKey.isPending}
+                    />
+                  </div>
+
+                  <div className="space-y-2 pt-1 border-t">
+                    <div className="space-y-1">
+                      <label className="text-sm font-medium">模拟 Prompt 缓存策略</label>
+                      <div className="grid grid-cols-3 gap-2">
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant={createCacheMode === 'inherit' ? 'default' : 'outline'}
+                          className="text-xs"
+                          onClick={() => setCreateCacheMode('inherit')}
+                        >
+                          跟随分组/全局
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant={createCacheMode === 'custom' ? 'default' : 'outline'}
+                          className="text-xs"
+                          onClick={() => setCreateCacheMode('custom')}
+                        >
+                          自定义缓存率
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant={createCacheMode === 'disabled' ? 'default' : 'outline'}
+                          className="text-xs"
+                          onClick={() => setCreateCacheMode('disabled')}
+                        >
+                          禁用缓存模拟
+                        </Button>
+                      </div>
+                      <p className="text-[11px] text-muted-foreground">
+                        {createCacheMode === 'inherit' && '沿用绑定分组或全局设置中的模拟缓存开关及命中率配置。'}
+                        {createCacheMode === 'custom' && '将输入 Token 按指定比例模拟拆分为普通输入与缓存读取，下游计费总额绝对恒等（0 误差）。'}
+                        {createCacheMode === 'disabled' && '不模拟拆分缓存，所有输入用量均作为普通 input_tokens 返回。'}
+                      </p>
+                    </div>
+
+                    {createCacheMode === 'custom' && (
+                      <div className="space-y-2.5 pl-0.5">
+                        <div className="space-y-1.5">
+                          <label className="text-xs font-medium text-muted-foreground">
+                            {createFixedCache ? '专属固定缓存比例 (%)' : '专属缓存命中率上限 (%)'}
+                          </label>
+                          <div className="flex items-center gap-2">
+                            <Input
+                              type="number"
+                              min={1}
+                              max={99}
+                              value={createCacheRatio}
+                              onChange={(e) => setCreateCacheRatio(e.target.value)}
+                              className="w-24 text-xs h-8"
+                              disabled={createKey.isPending}
+                            />
+                            <span className="text-xs text-muted-foreground">%</span>
+                            <div className="flex items-center gap-1">
+                              {[50, 70, 80, 90].map((preset) => (
+                                <Button
+                                  key={preset}
+                                  type="button"
+                                  size="sm"
+                                  variant={createCacheRatio === String(preset) ? 'secondary' : 'ghost'}
+                                  className="h-7 px-2 text-xs"
+                                  onClick={() => setCreateCacheRatio(String(preset))}
+                                  disabled={createKey.isPending}
+                                >
+                                  {preset}%
+                                </Button>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex items-center justify-between rounded-lg border p-2 bg-muted/20">
+                          <div className="space-y-0.5">
+                            <div className="text-xs font-medium">固定缓存</div>
+                            <div className="text-[11px] text-muted-foreground">
+                              开启后返回固定比例缓存，不受上游真实缓存命中率约束；关闭时以此为上限
+                            </div>
+                          </div>
+                          <Switch
+                            checked={createFixedCache}
+                            onCheckedChange={setCreateFixedCache}
+                            disabled={createKey.isPending}
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </>
               )}
               <DialogFooter>
                 <Button type="button" variant="outline" onClick={() => setCreateOpen(false)} disabled={createKey.isPending}>
@@ -1090,7 +1251,7 @@ const KEYS_NAV_ITEMS: NavSectionItem[] = [
       {/* 编辑对话框 */}
       {editOpen && (
         <Dialog open={editOpen} onOpenChange={(o) => !updateKey.isPending && setEditOpen(o)}>
-          <DialogContent className="sm:max-w-md max-h-[88vh] overflow-y-auto">
+          <DialogContent className="sm:max-w-lg max-h-[88vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>编辑 Key</DialogTitle>
               <DialogDescription>修改名称与描述（不影响 Key 值与统计）</DialogDescription>
@@ -1171,14 +1332,106 @@ const KEYS_NAV_ITEMS: NavSectionItem[] = [
                 </p>
               </div>
               {editCreditMode === 'enabled' && (
-                <div className="space-y-1.5">
-                  <label className="text-[12px] text-muted-foreground">专属计费单价</label>
-                  <CreditPriceInput
-                    value={editCreditPrice}
-                    onChange={setEditCreditPrice}
-                    disabled={updateKey.isPending}
-                  />
-                </div>
+                <>
+                  <div className="space-y-1.5">
+                    <label className="text-[12px] text-muted-foreground">专属计费单价</label>
+                    <CreditPriceInput
+                      value={editCreditPrice}
+                      onChange={setEditCreditPrice}
+                      disabled={updateKey.isPending}
+                    />
+                  </div>
+
+                  <div className="space-y-2 pt-1 border-t">
+                    <div className="space-y-1">
+                      <label className="text-sm font-medium">模拟 Prompt 缓存策略</label>
+                      <div className="grid grid-cols-3 gap-2">
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant={editCacheMode === 'inherit' ? 'default' : 'outline'}
+                          className="text-xs"
+                          onClick={() => setEditCacheMode('inherit')}
+                        >
+                          跟随分组/全局
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant={editCacheMode === 'custom' ? 'default' : 'outline'}
+                          className="text-xs"
+                          onClick={() => setEditCacheMode('custom')}
+                        >
+                          自定义缓存率
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant={editCacheMode === 'disabled' ? 'default' : 'outline'}
+                          className="text-xs"
+                          onClick={() => setEditCacheMode('disabled')}
+                        >
+                          禁用缓存模拟
+                        </Button>
+                      </div>
+                      <p className="text-[11px] text-muted-foreground">
+                        {editCacheMode === 'inherit' && '沿用绑定分组或全局设置中的模拟缓存开关及命中率配置。'}
+                        {editCacheMode === 'custom' && '将输入 Token 按指定比例模拟拆分为普通输入与缓存读取，下游计费总额绝对恒等（0 误差）。'}
+                        {editCacheMode === 'disabled' && '不模拟拆分缓存，所有输入用量均作为普通 input_tokens 返回。'}
+                      </p>
+                    </div>
+
+                    {editCacheMode === 'custom' && (
+                      <div className="space-y-2.5 pl-0.5">
+                        <div className="space-y-1.5">
+                          <label className="text-xs font-medium text-muted-foreground">
+                            {editFixedCache ? '专属固定缓存比例 (%)' : '专属缓存命中率上限 (%)'}
+                          </label>
+                          <div className="flex items-center gap-2">
+                            <Input
+                              type="number"
+                              min={1}
+                              max={99}
+                              value={editCacheRatio}
+                              onChange={(e) => setEditCacheRatio(e.target.value)}
+                              className="w-24 text-xs h-8"
+                              disabled={updateKey.isPending}
+                            />
+                            <span className="text-xs text-muted-foreground">%</span>
+                            <div className="flex items-center gap-1">
+                              {[50, 70, 80, 90].map((preset) => (
+                                <Button
+                                  key={preset}
+                                  type="button"
+                                  size="sm"
+                                  variant={editCacheRatio === String(preset) ? 'secondary' : 'ghost'}
+                                  className="h-7 px-2 text-xs"
+                                  onClick={() => setEditCacheRatio(String(preset))}
+                                  disabled={updateKey.isPending}
+                                >
+                                  {preset}%
+                                </Button>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex items-center justify-between rounded-lg border p-2 bg-muted/20">
+                          <div className="space-y-0.5">
+                            <div className="text-xs font-medium">固定缓存</div>
+                            <div className="text-[11px] text-muted-foreground">
+                              开启后返回固定比例缓存，不受上游真实缓存命中率约束；关闭时以此为上限
+                            </div>
+                          </div>
+                          <Switch
+                            checked={editFixedCache}
+                            onCheckedChange={setEditFixedCache}
+                            disabled={updateKey.isPending}
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </>
               )}
               <DialogFooter>
                 <Button type="button" variant="outline" onClick={() => setEditOpen(false)}>取消</Button>

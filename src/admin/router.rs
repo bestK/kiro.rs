@@ -24,7 +24,9 @@ use super::{
         get_token_by_credit_config, set_token_by_credit_config,
         verify_downstream_billing, get_billing_verifications, clear_billing_verifications,
         fetch_token_by_credit_models, fetch_newapi_groups, calculate_profit,
-        get_load_balancing_mode, get_log_governance_config, get_proxy_pool, get_self_heal_config,
+        get_load_balancing_mode, get_log_governance_config, get_proxy_failover_config,
+        get_proxy_pool, get_self_heal_config, rotate_credential_proxies,
+        set_proxy_failover_config,
         get_update_config, list_client_keys, list_groups, list_traces, poll_idc_login,
         poll_idc_relogin, poll_social_login, poll_social_relogin, pull_update_image,
         reset_all_success_count, reset_client_key_stats, reset_failure_count, reset_success_count,
@@ -109,6 +111,7 @@ pub fn create_admin_router(state: AdminState) -> Router {
         .route("/proxy-pool", get(get_proxy_pool).post(add_proxy))
         .route("/proxy-pool/batch", post(batch_add_proxies))
         .route("/proxy-pool/check-all", post(check_all_proxies))
+        .route("/proxy-pool/rotate", post(rotate_credential_proxies))
         .route(
             "/proxy-pool/assign-round-robin",
             post(assign_proxies_round_robin),
@@ -131,6 +134,10 @@ pub fn create_admin_router(state: AdminState) -> Router {
         .route(
             "/config/self-heal",
             get(get_self_heal_config).put(set_self_heal_config),
+        )
+        .route(
+            "/config/proxy-failover",
+            get(get_proxy_failover_config).put(set_proxy_failover_config),
         )
         .route(
             "/config/log-governance",
